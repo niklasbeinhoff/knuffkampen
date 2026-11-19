@@ -7,7 +7,7 @@
 // in both: index.html, js/, css/, shared/, server/ (the game rules only) and
 // vendor/three/.
 
-import { cp, mkdir, rm, writeFile, readdir } from 'node:fs/promises';
+import { cp, mkdir, rm, writeFile, readFile, readdir } from 'node:fs/promises';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
@@ -46,6 +46,12 @@ for (const d of ['postprocessing', 'shaders', 'utils']) {
   await cp(path.join(THREE, 'examples', 'jsm', d), path.join(OUT, 'vendor', 'three', 'examples', 'jsm', d), { recursive: true });
 }
 await cp(path.join(THREE, 'LICENSE'), path.join(OUT, 'vendor', 'three', 'LICENSE'));
+
+// The Pages site plays Heta paketet only (see `only` in public/js/hud.js).
+const indexPath = path.join(OUT, 'index.html');
+const index = await readFile(indexPath, 'utf8');
+if (!index.includes('<title>Knuffkampen</title>')) throw new Error('index.html: hittar inte <title>');
+await writeFile(indexPath, index.replace('<title>Knuffkampen</title>', '<title>Heta paketet</title>'));
 
 // Serve files as they are (no Jekyll processing on GitHub Pages).
 await writeFile(path.join(OUT, '.nojekyll'), '');

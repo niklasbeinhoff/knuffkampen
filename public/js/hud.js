@@ -57,6 +57,8 @@ export function createHud(root, opts = {}) {
   });
   const host = !!opts.host;     // the big screen: TV layout, never a player
   let ctl = host;               // holds the host controls (big screen, or a playing host)
+  // One game only (the GitHub Pages site plays Heta paketet): its own join card, no game picker.
+  const only = opts.only === GAME.PAKET ? GAME.PAKET : null;
   const on = opts.on || {};
   root.textContent = '';
   root.classList.toggle('host', host);
@@ -219,10 +221,10 @@ export function createHud(root, opts = {}) {
         fold.setAttribute('aria-expanded', shut ? 'false' : 'true');
       });
     }
-    const gsw = el('div', 'gsw', null, lobby);
-    gsw.setAttribute('role', 'group');
-    gsw.setAttribute('aria-label', 'Spel');
-    [[GAME.KNUFF, 'Knuffkampen'], [GAME.PAKET, 'Heta paketet'], [GAME.GOLF, 'Molngolf'], [GAME.KLOSS, 'Klossgolf']].forEach(([g, label]) => {
+    const gsw = only === null ? el('div', 'gsw', null, lobby) : null;
+    if (gsw) gsw.setAttribute('role', 'group');
+    if (gsw) gsw.setAttribute('aria-label', 'Spel');
+    if (gsw) [[GAME.KNUFF, 'Knuffkampen'], [GAME.PAKET, 'Heta paketet'], [GAME.GOLF, 'Molngolf'], [GAME.KLOSS, 'Klossgolf']].forEach(([g, label]) => {
       const bt = el('button', null, label, gsw); bt.type = 'button';
       bt.addEventListener('click', () => {
         if (hpState.game === g) return;
@@ -326,8 +328,8 @@ export function createHud(root, opts = {}) {
       joinEl = el('div', 'ov join', null, root);
       const form = el('form', 'card', null, joinEl);
       form.setAttribute('autocomplete', 'off');
-      el('span', 'xt', 'Extra · knuff, paket & golf', form);
-      el('h1', null, 'KNUFFKAMPEN', form);
+      el('span', 'xt', only === GAME.PAKET ? 'Extra · partyspel' : 'Extra · knuff, paket & golf', form);
+      el('h1', null, only === GAME.PAKET ? 'HETA PAKETET' : 'KNUFFKAMPEN', form);
       const l1 = el('label', null, 'Smeknamn', form);
       joinName = el('input', null, null, l1);
       joinName.type = 'text';
@@ -352,7 +354,8 @@ export function createHud(root, opts = {}) {
       joinErr = el('div', 'err', '', form);
       joinBtn = el('button', 'btn', 'Hoppa in', form);
       joinBtn.type = 'submit';
-      el('div', 'hint', 'Knuffkampen: WASD eller piltangenter styr, mellanslag knuffar. Molngolf: dra och släpp för att slå. Klossgolf: sikta, håll nere och släpp. Heta paketet: knuffa vidare paketet innan det poppar!', form);
+      if (only === GAME.PAKET) el('div', 'hint', 'Knuffa vidare paketet innan det poppar! Datorn: WASD eller piltangenter styr, mellanslag knuffar. Mobilen: styr med spaken, tryck på KNUFF.', form);
+      else el('div', 'hint', 'Knuffkampen: WASD eller piltangenter styr, mellanslag knuffar. Molngolf: dra och släpp för att slå. Klossgolf: sikta, håll nere och släpp. Heta paketet: knuffa vidare paketet innan det poppar!', form);
       form.addEventListener('submit', (e) => {
         e.preventDefault();
         if (joinBtn.disabled) return;

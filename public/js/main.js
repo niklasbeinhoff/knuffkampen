@@ -75,6 +75,7 @@ const canvas = document.getElementById('c');
 const scene = createScene(canvas, { spectator: isHost });
 const hud = createHud(document.getElementById('hud'), {
   host: isHost,
+  only: P2P ? GAME.PAKET : null,   // the GitHub Pages site plays Heta paketet only
   on: {
     start() { unlockAudio(); send({ t: 'cmd', c: 'start' }); },
     toLobby() { send({ t: 'cmd', c: 'lobby' }); },
@@ -676,7 +677,7 @@ function onPhase(ph, s, prev) {
       clearTimeout(outTimer);
       amOut = false;
       setMusic('lobby');
-      if (prev !== -1) hud.ticker(infoText('lobby'), 'info');
+      if (prev !== -1) hud.ticker(curGame === GAME.PAKET ? paketText('lobby', {}) : infoText('lobby'), 'info');
       break;
     case PHASE.COUNTDOWN:
       hud.clearOverlays();
@@ -1439,6 +1440,9 @@ function showJoin(error) {
   });
   if (error) hud.setJoinError(error);
 }
+
+// The Pages site is Heta paketet: show its arena behind the join card too.
+if (P2P) switchGame(GAME.PAKET);
 
 if (roomHost) {
   // Open the room at once, so the others can get in while the host types a name.

@@ -80,8 +80,8 @@ efter slaget springer figuren fram till bollen. Alla spelar samma hål samtidigt
 Spelet ligger på **https://niklasbeinhoff.github.io/knuffkampen/** och behöver ingen
 server och inget konto någonstans. Rummet körs i **värdens egen flik**, och de andra
 kopplar upp sig direkt mot den med WebRTC. Den fria tjänsten PeerJS används bara för att
-webbläsarna ska hitta varandra. Rummet öppnar i **Heta paketet**, och det finns ingen
-TV-vy.
+webbläsarna ska hitta varandra. Sidan är **bara Heta paketet**: startsidan, fliken och
+bakgrunden visar det spelet, och värden har ingen spelväljare. Det finns ingen TV-vy.
 
 - **Du (värd):** öppna `https://niklasbeinhoff.github.io/knuffkampen/?k=KOD&host` och
   skriv ditt namn. Rummet öppnas med den koden, och värdkontrollerna (botar, start, ny
