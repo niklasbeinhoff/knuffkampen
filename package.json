@@ -1,0 +1,19 @@
+{
+  "name": "knuffkampen",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Knuffkampen – ett tillfälligt partyspel i webbläsaren",
+  "scripts": {
+    "start": "node server/server.js",
+    "dev:static": "node tools/dev-static.js",
+    "smoke": "node tools/smoke.js"
+  },
+  "dependencies": {
+    "three": "^0.187.0",
+    "ws": "^8.23.0"
+  },
+  "engines": {
+    "node": ">=24"
+  }
+}

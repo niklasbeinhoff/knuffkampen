@@ -1,0 +1,267 @@
+<!doctype html>
+<html lang="sv">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, user-scalable=no">
+  <meta name="robots" content="noindex, nofollow">
+  <title>Klossgolf – scene test</title>
+  <style>
+    html, body { margin: 0; height: 100%; overflow: hidden; background: #0b1230; }
+    #c { position: fixed; left: 0; top: 0; width: 100%; height: 100%; display: block; touch-action: none; }
+    #stat {
+      position: fixed; left: 10px; top: 10px; padding: 5px 9px; border-radius: 8px;
+      font: 12px/1.45 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+      color: #fff; background: rgba(10, 18, 44, 0.62); white-space: pre; pointer-events: none;
+    }
+    #bar { position: fixed; left: 10px; bottom: 10px; right: 10px; display: flex; flex-wrap: wrap; gap: 6px; }
+    #bar button {
+      font: 600 13px system-ui, sans-serif; padding: 7px 11px; border-radius: 9px; border: 0;
+      background: rgba(10, 18, 44, 0.72); color: #fff; cursor: pointer;
+    }
+    #bar button.on { background: #ffd426; color: #131d40; }
+  </style>
+  <script type="importmap">
+    {
+      "imports": {
+        "three": "/vendor/three/build/three.module.js",
+        "three/addons/": "/vendor/three/examples/jsm/"
+      }
+    }
+  </script>
+</head>
+<body>
+  <canvas id="c"></canvas>
+  <div id="stat"></div>
+  <div id="bar">
+    <button id="bPlayer" class="on">Spelarvy</button>
+    <button id="bSpect">TV-vy</button>
+    <button id="bIntro">Intro</button>
+    <button id="bNext">Nästa hål</button>
+    <button id="bAuto" class="on">Auto</button>
+    <button id="bPause">Paus</button>
+  </div>
+  <script type="module">
+    // Fake Klossgolf for judging the scene without the game server. No sound.
+    //   ?host=1   host screen (spectator camera)   ?n=6   players (1..40)   ?c=1   course
+    //   ?q=low|medium|high   ?auto=0   you aim yourself: A/D turn, W/S club, hold Space to swing
+    import { createScene } from '/js/scene.js';
+    import { KG, SURF, CLUBS, PUTTER, KST, createBall, placeBall, launch, stepBall, teeSpot, atRest,
+      aimPoint, suggestClub, bestPower, predict, surfaceAt } from '/shared/klossgolf.js';
+    import { KCOURSES } from '/shared/klosscourses.js';
+    import { GAME, PHASE } from '/shared/protocol.js';
+
+    const params = new URLSearchParams(location.search);
+    const host = params.get('host') === '1';
+    const N = Math.max(1, Math.min(40, parseInt(params.get('n'), 10) || 6));
+    let auto = params.get('auto') !== '0';
+    let spectate = host;
+    const clamp = (v, a, b) => Math.max(a, Math.min(b, v));
+
+    const canvas = document.getElementById('c');
+    const scene = createScene(canvas, { spectator: host });
+    window.__scene = scene;
+    if (params.get('q')) scene.setQuality(params.get('q'));
+    scene.setGame(GAME.KLOSS);
+    scene.setCourse(-3);            // odd input must not throw
+    scene.fx.swing(999, 0, 0.5, 0); scene.fx.land(999, 0, 0, 1, 5); scene.fx.tree(NaN, 0, 0);
+
+    const NAMES = ['Astrid', 'Björn', 'Cilla', 'Dag', 'Ebba', 'Folke', 'Greta', 'Hugo', 'Ines', 'Jarl', 'Kajsa', 'Love', 'Maja', 'Nils',
+      'Olle', 'Pia', 'Runa', 'Sixten', 'Tyra', 'Ulf', 'Vera', 'Åke', 'Saga', 'Tove', 'Elsa', 'Alva', 'Axel', 'Liv', 'Sven', 'Örjan'];
+    const me = host ? -1 : 0;
+    const P = [];
+    for (let i = 0; i < N; i++) {
+      const b = createBall(i);
+      Object.assign(b, { strokes: 0, wait: 1 + Math.random() * 2, err: 0.02 + Math.random() * 0.08, perr: 0.04 + Math.random() * 0.12,
+        fx: 0, fy: 0, run: 0, holedT: 0 });
+      P.push(b);
+      scene.upsertPlayer(i, { name: i === me ? 'Du' : NAMES[i % NAMES.length], color: i, isMe: i === me, bot: i !== me });
+    }
+
+    let ci = clamp(parseInt(params.get('c'), 10) || 1, 0, KCOURSES.length - 1);
+    let course = KCOURSES[ci], wind = [0, 0], phase = PHASE.PLAYING, introT = 0, paused = false;
+    function startCourse(k, withIntro) {
+      if (!KCOURSES[k]) k = 0;
+      ci = k; course = KCOURSES[ci];
+      const a = Math.random() * Math.PI * 2, s = ci === 0 ? 0 : 1.5 + Math.random() * (KG.MAX_WIND - 1.5);
+      wind = [Math.round(Math.cos(a) * s * 10) / 10, Math.round(Math.sin(a) * s * 10) / 10];
+      P.forEach((b, i) => {
+        const [x, y] = teeSpot(course, i);
+        placeBall(b, x, y);
+        b.strokes = 0; b.wait = 1.5 + Math.random() * 2.5; b.run = 0;
+        b.fx = x - Math.cos(course.tee.a) * 1; b.fy = y - Math.sin(course.tee.a) * 1;
+      });
+      scene.setCourse(ci);
+      mine.heading = null;
+      if (withIntro) { phase = PHASE.COUNTDOWN; introT = KG.INTRO_T; } else { phase = PHASE.PLAYING; introT = 0; }
+    }
+
+    // ---- the local player's aim
+    const mine = { heading: null, club: 0, charge: -1, chargeT: 0, target: 1, spot: '', turn: 0 };
+    function meterPower(t) { const u = (t / KG.CHARGE_T) % 2; return u <= 1 ? u : 2 - u; }
+
+    function ready(b) {
+      return atRest(b) && Math.hypot(b.fx - b.x, b.fy - b.y) <= KG.REACH && phase === PHASE.PLAYING;
+    }
+    function swing(b, club, power, angle) {
+      const p = launch(b, course, club, power, angle, (Math.random() * 2 - 1));
+      b.strokes++; b.run = KG.RUN_DELAY;
+      scene.fx.swing(b.id, club, p, angle);
+    }
+    function botShot(b) {
+      const t = aimPoint(course, b.x, b.y);
+      const ang = Math.atan2(t[1] - b.y, t[0] - b.x);
+      const club = suggestClub(course, b.x, b.y, Math.hypot(t[0] - b.x, t[1] - b.y));
+      const best = bestPower(course, b.x, b.y, ang, club, t[0], t[1], { wind });
+      swing(b, club, clamp(best.p * (1 + (Math.random() * 2 - 1) * b.perr), 0.06, 1), ang + (Math.random() * 2 - 1) * b.err);
+    }
+
+    // ---- keys (manual mode)
+    const keys = new Set();
+    addEventListener('keydown', (e) => {
+      if (e.repeat) return;
+      keys.add(e.code);
+      if (e.code === 'KeyW' || e.code === 'ArrowUp') mine.club = (mine.club + CLUBS.length - 1) % CLUBS.length;
+      if (e.code === 'KeyS' || e.code === 'ArrowDown') mine.club = (mine.club + 1) % CLUBS.length;
+      if (e.code === 'Space' && !auto && me >= 0 && ready(P[me])) { mine.charge = 0; mine.chargeT = 0; }
+      if (e.code === 'KeyP') togglePause();
+      if (/^Digit[0-9]$/.test(e.code)) startCourse(+e.code.slice(5), false);
+    });
+    addEventListener('keyup', (e) => {
+      keys.delete(e.code);
+      if (e.code === 'Space' && mine.charge >= 0 && !auto) {
+        const b = P[me];
+        if (ready(b)) swing(b, mine.club, Math.max(KG.MIN_POWER, meterPower(mine.chargeT)), mine.heading);
+        mine.charge = -1;
+      }
+    });
+
+    // ---- buttons
+    const $ = (id) => document.getElementById(id);
+    const sync = () => {
+      $('bPlayer').classList.toggle('on', !spectate); $('bSpect').classList.toggle('on', spectate);
+      $('bAuto').classList.toggle('on', auto); $('bPause').classList.toggle('on', paused);
+    };
+    const togglePause = () => { paused = !paused; sync(); };
+    $('bPlayer').onclick = () => { if (me >= 0) spectate = false; sync(); };
+    $('bSpect').onclick = () => { spectate = true; sync(); };
+    $('bIntro').onclick = () => startCourse(ci, true);
+    $('bNext').onclick = () => startCourse((ci + 1) % KCOURSES.length, true);
+    $('bAuto').onclick = () => { auto = !auto; mine.charge = -1; sync(); };
+    $('bPause').onclick = togglePause;
+    sync();
+
+    // ---- simulation (what the server does)
+    const STEP = 1 / 60, events = [];
+    function simStep() {
+      if (phase === PHASE.COUNTDOWN) {
+        introT -= STEP;
+        if (introT <= 0) { introT = 0; phase = PHASE.PLAYING; }
+        return;
+      }
+      for (const b of P) {
+        // figures run after their ball
+        if (b.run > 0) b.run -= STEP;
+        else {
+          const holed = (b.st & KST.HOLED) !== 0;
+          const tx = holed ? course.cup[0] : b.x, ty = holed ? course.cup[1] : b.y, stop = holed ? 1.5 : 1;
+          const dx = tx - b.fx, dy = ty - b.fy, d = Math.hypot(dx, dy);
+          if (d > stop + 0.01) { const s = Math.min(KG.RUN_SPEED * STEP, d - stop); b.fx += dx / d * s; b.fy += dy / d * s; }
+        }
+        if (b.st & KST.HOLED) {
+          if ((b.holedT += STEP) > 5) { b.holedT = 0; const [x, y] = teeSpot(course, b.id); placeBall(b, x, y); b.strokes = 0; events.push(['spawn', b.id]); }
+          continue;
+        }
+        const isMe = b.id === me;
+        if ((!isMe || auto) && ready(b) && (b.wait -= STEP) <= 0 && !(isMe && mine.charge >= 0)) {
+          if (isMe) { mine.charge = 0; mine.chargeT = 0; const t = aimPoint(course, b.x, b.y); mine.target = bestPower(course, b.x, b.y, mine.heading, mine.club, t[0], t[1], { wind }).p; }
+          else { botShot(b); b.wait = 0.8 + Math.random() * 1.7; }
+        }
+        stepBall(b, course, wind, STEP, events);
+      }
+      // my charge in auto mode: sweep up, then release at the caddie's power
+      if (me >= 0 && mine.charge >= 0) {
+        mine.chargeT += STEP;
+        const p = meterPower(mine.chargeT);
+        if (auto && mine.chargeT > 0.2 && mine.chargeT <= KG.CHARGE_T && p >= mine.target) {
+          if (ready(P[me])) swing(P[me], mine.club, p, mine.heading);
+          mine.charge = -1; P[me].wait = 1.2 + Math.random();
+        }
+      }
+      for (const e of events) {
+        const [k, id] = e, b = P[id];
+        if (k === 'land') scene.fx.land(id, e[2], e[3], e[4], e[5]);
+        else if (k === 'tree') scene.fx.tree(e[2], e[3], e[4]);
+        else if (k === 'splash') { scene.fx.splash(id, e[2], e[3]); b.strokes++; }
+        else if (k === 'oob') { scene.fx.oob(id); b.strokes++; }
+        else if (k === 'holed') { scene.fx.holed(id, b.strokes); b.holedT = 0; }
+      }
+      events.length = 0;
+    }
+
+    // ---- loop
+    let acc = 0, last = performance.now(), time = 0, statT = 0;
+    const stat = document.getElementById('stat');
+    window.__h = {
+      P, get ci() { return ci; }, startCourse, mine, togglePause,
+      set auto(v) { auto = !!v; sync(); }, set spectate(v) { spectate = !!v; sync(); },
+      /** Put the local ball somewhere and the figure next to it. */
+      place(x, y, club) { const b = P[me]; placeBall(b, x, y); b.fx = x - 1; b.fy = y; b.run = 0; b.wait = 1e9; if (club != null) mine.club = club; mine.spot = ''; mine.heading = null; },
+      shoot(club, power, angle) { const b = P[me]; swing(b, club ?? mine.club, power ?? 1, angle ?? mine.heading); },
+      charge(t) { mine.charge = 0; mine.chargeT = t; },
+    };
+
+    function tick(now) {
+      const dt = Math.min(0.1, (now - last) / 1000);
+      last = now;
+      if (!paused) {
+        time += dt; acc += dt;
+        while (acc >= STEP) { simStep(); acc -= STEP; }
+      }
+      // the caddie: a sensible club and direction each time my ball comes to rest
+      let aim = null;
+      if (me >= 0) {
+        const b = P[me];
+        const spot = b.x.toFixed(2) + ',' + b.y.toFixed(2);
+        if (spot !== mine.spot && atRest(b)) {
+          mine.spot = spot;
+          const t = aimPoint(course, b.x, b.y);
+          mine.heading = Math.atan2(t[1] - b.y, t[0] - b.x);
+          mine.club = suggestClub(course, b.x, b.y, Math.hypot(t[0] - b.x, t[1] - b.y));
+        }
+        if (mine.heading == null) mine.heading = course.tee.a;
+        if (!paused) {
+          const turn = (keys.has('KeyA') || keys.has('ArrowLeft') ? 1 : 0) - (keys.has('KeyD') || keys.has('ArrowRight') ? 1 : 0);
+          mine.heading += turn * 0.9 * dt;
+        }
+        if (ready(b)) {
+          const charging = mine.charge >= 0;
+          const p = charging ? Math.max(KG.MIN_POWER, meterPower(mine.chargeT)) : 1;
+          const path = [];
+          const r = predict(course, b.x, b.y, mine.heading, mine.club, p, { path, wind });
+          aim = { angle: mine.heading, club: mine.club, power: p, charging, path, land: r.land, rest: r.rest, end: r.end };
+        }
+      }
+      const view = {
+        time, game: GAME.KLOSS, phase, myId: host ? null : me, spectate, course: ci, wind,
+        intro: phase === PHASE.COUNTDOWN ? introT : 0,
+        heading: mine.heading ?? 0,
+        balls: P.map((b) => ({ id: b.id, x: b.x, y: b.y, z: b.z, strokes: b.strokes, fx: b.fx, fy: b.fy,
+          st: b.st | (ready(b) ? KST.READY : 0) })),
+        aim: spectate ? null : aim,
+      };
+      scene.frame(paused ? 0 : dt, view);
+      statT += dt;
+      if (statT > 0.25) {
+        statT = 0;
+        const s = scene.getStats(), b = P[Math.max(0, me)];
+        stat.textContent = `${s.fps} fps  ${s.quality}  calls ${s.calls}  tris ${(s.triangles / 1000).toFixed(0)}k\n` +
+          `hål ${ci} ${course.name} (par ${course.par})  vind ${Math.hypot(wind[0], wind[1]).toFixed(1)} m/s\n` +
+          (me >= 0 ? `du: ${CLUBS[mine.club].name}  slag ${b.strokes}  ${aim ? (aim.charging ? 'laddar ' + Math.round(aim.power * 100) + ' %' : 'redo') : ''}` : 'TV');
+      }
+      requestAnimationFrame(tick);
+    }
+    startCourse(ci, params.get('intro') === '1');
+    requestAnimationFrame(tick);
+  </script>
+</body>
+</html>

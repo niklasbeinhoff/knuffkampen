@@ -1,0 +1,257 @@
+<!doctype html>
+<html lang="sv">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, user-scalable=no">
+  <meta name="robots" content="noindex, nofollow">
+  <title>Knuffkampen – scene test</title>
+  <style>
+    html, body { margin: 0; height: 100%; overflow: hidden; background: #0b1230; }
+    #c { position: fixed; left: 0; top: 0; width: 100%; height: 100%; display: block; touch-action: none; }
+    #stat {
+      position: fixed; left: 10px; top: 10px; padding: 5px 9px; border-radius: 8px;
+      font: 12px/1.45 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+      color: #fff; background: rgba(10, 18, 44, 0.62); white-space: pre; pointer-events: none;
+    }
+  </style>
+  <script type="importmap">
+    {
+      "imports": {
+        "three": "/vendor/three/build/three.module.js",
+        "three/addons/": "/vendor/three/examples/jsm/"
+      }
+    }
+  </script>
+</head>
+<body>
+  <canvas id="c"></canvas>
+  <div id="stat"></div>
+  <script type="module">
+    // Fake match for judging the scene without the game server.
+    //   ?spectator=1   host camera        ?n=30   body count (2..40)
+    //   ?q=low|medium|high                ?lag=100   delay positions by that many ms (like the real client)
+    //   ?auto=1        body 0 drives itself but keeps the player camera
+    // Keys: WASD / arrows steer body 0, space dashes.
+    import { createScene } from '/js/scene.js';
+    import { SIM, arenaRadius, ringsForPlayers, createBody, placeBody, step } from '/shared/sim.js';
+    import { PHASE, ST, PALETTE } from '/shared/protocol.js';
+
+    const params = new URLSearchParams(location.search);
+    const spectator = params.get('spectator') === '1';
+    const N = Math.max(2, Math.min(40, parseInt(params.get('n'), 10) || 10));
+    const lag = Math.max(0, Math.min(500, Number(params.get('lag')) || 0));
+    const autopilot = params.get('auto') === '1';
+    const clamp = (v, a, b) => Math.max(a, Math.min(b, v));
+
+    const scene = createScene(document.getElementById('c'), { spectator });
+    window.__scene = scene;
+    if (params.get('q')) scene.setQuality(params.get('q'));
+
+    const NAMES = ['Astrid', 'Björn', 'Cilla', 'Dag', 'Ebba', 'Folke', 'Greta', 'Hugo', 'Ines', 'Jarl', 'Kajsa', 'Love', 'Maja', 'Nils',
+      'Olle', 'Pia', 'Runa', 'Sixten', 'Tyra', 'Ulf', 'Vera', 'Åke', 'Saga', 'Tove', 'Elsa', 'Alva', 'Axel', 'Liv', 'Sven', 'Örjan'];
+    const bots = Math.min(12, Math.floor(N * 0.3));
+    const bodies = [];
+    for (let i = 0; i < N; i++) {
+      const b = createBody(i);
+      b.px = 0; b.py = 0; b.pz = 0;
+      b.ai = { t: 0, target: null, jx: 0, jy: 0, caution: Math.random() * 1.3 };
+      bodies.push(b);
+      const bot = i >= N - bots;
+      scene.upsertPlayer(i, {
+        name: bot ? `Bot ${i - (N - bots) + 1}` : i === 0 && !spectator ? 'Du' : NAMES[i % NAMES.length],
+        color: i % PALETTE.length, isMe: !spectator && i === 0, bot,
+      });
+    }
+
+    const G = { phase: PHASE.LOBBY, pt: 0, elapsed: 0, r0: 3, rings: 3, nextFall: Infinity, now: 0, paused: false, frozen: false, speed: 1, round: 0, winner: null, confT: 0 };
+    const STEP = 1 / SIM.HZ;
+    const events = [];
+    const later = (fn) => (lag > 0 ? setTimeout(fn, lag) : fn());
+
+    function startRound() {
+      G.round++;
+      G.r0 = ringsForPlayers(N);
+      G.rings = G.r0;
+      scene.setArena(G.r0);
+      const R = arenaRadius(G.r0);
+      bodies.forEach((b, i) => {
+        const r = R * 0.8 * Math.sqrt((i + 0.5) / N), a = i * 2.39996 + G.round;
+        placeBody(b, r * Math.cos(a), r * Math.sin(a), a + Math.PI);
+        b.px = b.x; b.py = b.y; b.pz = 0;
+        b.frozen = true;
+        b.ai.t = 0; b.ai.target = null;
+      });
+      G.phase = PHASE.COUNTDOWN; G.pt = SIM.COUNTDOWN_T; G.elapsed = 0; G.nextFall = SIM.FIRST_FALL; G.winner = null;
+    }
+
+    const keys = new Set();
+    let dashKey = false;
+    addEventListener('keydown', (e) => {
+      if (e.code === 'Space') { if (!e.repeat) dashKey = true; e.preventDefault(); return; }
+      keys.add(e.code);
+      if (e.code.startsWith('Arrow')) e.preventDefault();
+    });
+    addEventListener('keyup', (e) => keys.delete(e.code));
+    addEventListener('blur', () => keys.clear());
+    function keyInput() {
+      let x = 0, y = 0;
+      if (keys.has('KeyA') || keys.has('ArrowLeft')) x -= 1;
+      if (keys.has('KeyD') || keys.has('ArrowRight')) x += 1;
+      if (keys.has('KeyW') || keys.has('ArrowUp')) y -= 1;
+      if (keys.has('KeyS') || keys.has('ArrowDown')) y += 1;
+      const l = Math.hypot(x, y);
+      return l > 1 ? { x: x / l, y: y / l } : { x, y };
+    }
+
+    function think(b, dt) {
+      if (b.falling || b.out || b.frozen) { b.ix = 0; b.iy = 0; return; }
+      const ai = b.ai;
+      ai.t -= dt;
+      const R = arenaRadius(G.rings), r = Math.hypot(b.x, b.y);
+      const warnIn = G.nextFall - G.elapsed;
+      const fleeing = G.phase === PHASE.PLAYING && G.rings > 0 && warnIn < SIM.WARN_T - ai.caution;
+      const safeR = fleeing ? R - SIM.RING_W : R;
+      if (ai.t <= 0) {
+        ai.t = 0.3 + Math.random() * 0.9;
+        const others = bodies.filter((o) => o !== b && !o.falling && !o.out);
+        if (!others.length) ai.target = null;
+        else if (Math.random() < 0.6) ai.target = others.reduce((m, o) => (Math.hypot(o.x - b.x, o.y - b.y) < Math.hypot(m.x - b.x, m.y - b.y) ? o : m));
+        else ai.target = others[(Math.random() * others.length) | 0];
+        ai.jx = (Math.random() - 0.5) * 0.9; ai.jy = (Math.random() - 0.5) * 0.9;
+      }
+      let tx, ty;
+      if (r > safeR - 1.4 - ai.caution) { tx = -b.x; ty = -b.y; }
+      else if (ai.target && !ai.target.falling && !ai.target.out) { tx = ai.target.x - b.x; ty = ai.target.y - b.y; }
+      else { tx = -b.x; ty = -b.y; }
+      const l = Math.hypot(tx, ty) || 1;
+      b.ix = clamp(tx / l + ai.jx * 0.5, -1, 1);
+      b.iy = clamp(ty / l + ai.jy * 0.5, -1, 1);
+      if (ai.target && b.cd <= 0 && r < safeR - 2) {
+        const d = Math.hypot(ai.target.x - b.x, ai.target.y - b.y);
+        if (d < 4.2 && d > 1.9 && Math.random() < dt * 0.7) b.dash = true;
+      }
+    }
+
+    function tick(dt, quiet) {
+      G.now += dt;
+      if (G.phase === PHASE.LOBBY) startRound();
+      if (G.phase === PHASE.COUNTDOWN) {
+        G.pt -= dt;
+        if (G.pt <= 0) { G.phase = PHASE.PLAYING; for (const b of bodies) b.frozen = false; }
+      } else if (G.phase === PHASE.PLAYING) {
+        G.elapsed += dt;
+        if (G.elapsed >= G.nextFall && G.rings >= 0) {
+          G.rings--;
+          G.nextFall = G.rings > 0 ? G.nextFall + SIM.FALL_EVERY : G.rings === 0 ? G.nextFall + SIM.SUDDEN_T : Infinity;
+        }
+        const alive = bodies.filter((b) => !b.falling && !b.out);
+        if (alive.length <= 1) {
+          G.phase = PHASE.ROUND_END; G.pt = SIM.ROUND_END_T; G.winner = alive[0] || null; G.confT = 0;
+        }
+      } else if (G.phase === PHASE.ROUND_END) {
+        G.pt -= dt;
+        G.confT -= dt;
+        const w = G.winner;
+        if (w && !w.falling && !w.out && G.confT <= 0 && !quiet) { G.confT = 1.1; const x = w.x, y = w.y; later(() => scene.fx.confetti(x, y)); }
+        if (G.pt <= 0) startRound();
+      }
+
+      const player = spectator ? null : bodies[0];
+      for (const b of bodies) {
+        b.px = b.x; b.py = b.y; b.pz = b.z;
+        if (b === player && !autopilot) {
+          const k = keyInput();
+          b.ix = k.x; b.iy = k.y;
+          if (dashKey) { b.dash = true; dashKey = false; }
+        } else think(b, dt);
+      }
+      events.length = 0;
+      step(bodies, arenaRadius(G.rings), dt, G.now, events);
+      if (quiet) return;
+      for (const e of events) {
+        if (e[0] === 'dash') { const id = e[1]; later(() => scene.fx.dash(id)); }
+        else if (e[0] === 'fall') { const id = e[1]; later(() => scene.fx.fall(id)); }
+        else if (e[0] === 'hit') {
+          const [, x, y, s, a, b] = e;
+          later(() => {
+            scene.fx.hit(x, y, s);
+            if (player && (a === 0 || b === 0)) scene.fx.shake(Math.min(1, s / 22));
+          });
+        }
+      }
+    }
+
+    const hist = [];
+    function buildView(alpha) {
+      const players = [];
+      for (const b of bodies) {
+        if (b.out) continue;
+        players.push({
+          id: b.id,
+          x: b.px + (b.x - b.px) * alpha, y: b.py + (b.y - b.py) * alpha, z: b.pz + (b.z - b.pz) * alpha,
+          face: b.face,
+          st: (b.falling ? ST.FALLING : 0) | (b.charge > 0 ? ST.CHARGED : 0) | (b.frozen ? ST.FROZEN : 0),
+          cd: b.cd / SIM.DASH_CD,
+        });
+      }
+      let shown = players;
+      if (lag > 0) {
+        const now = performance.now();
+        hist.push({ t: now, players });
+        while (hist.length > 1 && hist[1].t <= now - lag) hist.shift();
+        shown = hist[0].players;
+      }
+      const me = bodies[0];
+      return {
+        time: G.now,
+        phase: G.phase,
+        rings: G.rings,
+        warnIn: G.phase === PHASE.PLAYING && Number.isFinite(G.nextFall) ? Math.max(0, G.nextFall - G.elapsed) : -1,
+        myId: spectator ? null : 0,
+        spectate: spectator || me.out,
+        input: spectator ? { x: 0, y: 0 } : autopilot ? { x: me.ix, y: me.iy } : keyInput(),
+        players: shown,
+      };
+    }
+
+    // Small debug handle for staging screenshots from the console.
+    window.__h = {
+      G, bodies,
+      pause(p = true) { G.paused = p; },
+      /** Stop the harness loop completely, to drive scene.frame() by hand from the console. */
+      detach(d = true) { G.detached = d; },
+      freeze(f = true) { G.frozen = f; G.paused = f; },
+      speed(s) { G.speed = s; },
+      /** Fast-forward the sim (no effects) until `sec` seconds into the current round. */
+      skipTo(sec) { let n = 0; while (G.phase !== PHASE.PLAYING && n++ < 2000) tick(STEP, true); n = 0; while (G.phase === PHASE.PLAYING && G.elapsed < sec && n++ < 20000) tick(STEP, true); },
+      /** Advance sim and scene synchronously by `sec` seconds (works even when rAF is throttled). */
+      run(sec) { const n = Math.round(sec * SIM.HZ); for (let i = 0; i < n; i++) { tick(STEP, false); scene.frame(STEP, buildView(1)); } },
+      view: () => buildView(1),
+    };
+
+    const stat = document.getElementById('stat');
+    let last = performance.now(), acc = 0, statT = 0;
+    function loop(now) {
+      requestAnimationFrame(loop);
+      const dt = Math.min(0.1, Math.max(0, (now - last) / 1000));
+      last = now;
+      if (G.detached) return;
+      if (!G.paused) {
+        acc += dt * G.speed;
+        let n = 0;
+        while (acc >= STEP && n++ < 10) { tick(STEP, false); acc -= STEP; }
+        if (acc >= STEP) acc = 0;
+      }
+      scene.frame(G.frozen ? 0 : dt, buildView(G.paused ? 1 : acc / STEP));
+      statT += dt;
+      if (statT > 0.25) {
+        statT = 0;
+        const s = scene.getStats();
+        const alive = bodies.filter((b) => !b.falling && !b.out).length;
+        stat.textContent = `${s.fps} fps · ${s.quality}\n${alive}/${N} · rings ${G.rings} · phase ${G.phase}`;
+      }
+    }
+    requestAnimationFrame(loop);
+  </script>
+</body>
+</html>

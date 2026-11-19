@@ -1,0 +1,23 @@
+# Render Blueprint – reservvägen om Railway inte går (se README, "Över internet").
+# Railway behöver ingen egen fil: den hittar package.json och kör `npm start`.
+# KK_CODE och KK_HOST_KEY har ingen värde här: Render frågar efter dem när
+# blueprinten skapas, så de hamnar aldrig i Git.
+services:
+  - type: web
+    name: knuffkampen
+    runtime: node
+    plan: free
+    region: frankfurt
+    buildCommand: npm ci
+    startCommand: npm start
+    healthCheckPath: /health
+    autoDeploy: true
+    envVars:
+      - key: NODE_VERSION
+        value: "24"
+      - key: KK_GAME
+        value: paket
+      - key: KK_CODE
+        sync: false
+      - key: KK_HOST_KEY
+        sync: false

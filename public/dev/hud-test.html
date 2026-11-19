@@ -1,0 +1,287 @@
+<!doctype html>
+<html lang="sv">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, user-scalable=no">
+  <title>HUD test</title>
+  <link rel="stylesheet" href="/css/style.css">
+  <style>
+    body { background: linear-gradient(160deg, #6fb4ff 0%, #b9d9ff 45%, #e8f2ff 100%); }
+    #bar { position: fixed; left: 0; right: 0; top: 50%; z-index: 100; display: flex; flex-wrap: wrap; gap: 4px; padding: 6px; background: rgba(0,0,0,.7); font: 12px sans-serif; pointer-events: auto; touch-action: auto; }
+    #bar.min { display: none; }
+    #bar button { font: 12px sans-serif; padding: 4px 7px; }
+    #tg { position: fixed; left: 4px; top: 50%; z-index: 101; font: 12px sans-serif; transform: translateY(-100%); padding: 2px 8px; }
+  </style>
+</head>
+<body>
+  <canvas id="c"></canvas>
+  <div id="hud"></div>
+  <button id="tg" type="button">verktyg</button>
+  <div id="bar"></div>
+  <script type="module">
+    import { createHud } from '/js/hud.js';
+    import { PHASE, GAME } from '/shared/protocol.js';
+    import { koText, infoText, golfText, klossText, paketText } from '/js/texts.js';
+    import { CLUBS, SURFACE } from '/shared/klossgolf.js';
+
+    const host = new URLSearchParams(location.search).has('host');
+    const log = (...a) => console.log('[hud]', ...a);
+    const hud = createHud(document.getElementById('hud'), {
+      host,
+      on: {
+        start: () => log('start'), toLobby: () => log('toLobby'),
+        setBots: (n) => { log('setBots', n); hostState.bots = n; push(); },
+        setRounds: (n) => { log('setRounds', n); hostState.rounds = n; push(); },
+        setGame: (g) => { log('setGame', g); hostState.game = g; push(); },
+        kick: (id) => log('kick', id), mute: (m) => log('mute', m),
+        swing: (down) => { log('swing', down); onSwing(down); },
+        club: (d) => { log('club', d); KS.club = Math.max(0, Math.min(CLUBS.length - 1, KS.club + d)); syncControls(); },
+      },
+    });
+    window.hud = hud;
+
+    const names = ['Anna', 'Bertil', 'Cecilia Långnamnsson', 'Dragan', 'Elsa-Karin', 'Fredrik', 'Gunilla', 'Hassan', 'Ingrid', 'Johan', 'Karolina', 'Lars-Göran', 'Mikaela', 'Nils', 'Östen', 'Åsa'];
+    function roster(n, bots = 3) {
+      return Array.from({ length: n }, (_, i) => ({
+        id: i + 1, name: names[i % names.length], color: i, bot: i >= n - bots && n > 4,
+        score: Math.max(0, 30 - i * 2 + (i % 3)), kos: (i * 7) % 9, on: i !== 5,
+      }));
+    }
+    const R16 = roster(16);
+    let myId = 12;
+    const hostState = { phase: PHASE.LOBBY, url: 'https://knuff.example.se', code: 'KXQP', humans: 13, bots: 3, rounds: 3, game: GAME.KNUFF };
+    const push = () => hud.setHostPanel(hostState);
+    let ver = 0;
+
+    const st = (o) => hud.setStatus(Object.assign({ phase: PHASE.PLAYING, round: 2, rounds: 3, alive: 7, total: 16, warnIn: -1, sudden: false }, o));
+    let warnTimer = 0;
+    const stop = () => { clearInterval(warnTimer); };
+
+    const golfRoster = () => roster(16).map((p, i) => ({ ...p, score: 8 + i + (i % 3), kos: i === 2 ? 1 : 0, hs: (i * 3) % 5, in: i % 3 === 0 }));
+    const GS = { phase: PHASE.PLAYING, hole: 2, holes: 5, name: 'Väderkvarnen', par: 3, timeLeft: 42, strokes: 2, holed: false, canShoot: true };
+    const gs = (o) => hud.setGolf(Object.assign({}, GS, o));
+    const golfTop = [{ name: 'Elsa-Karin', color: 4, strokes: 2 }, { name: 'Cecilia Långnamnsson', color: 2, strokes: 3 }, { name: 'Bertil', color: 1, strokes: 4 }];
+    const golfStand = () => golfRoster().sort((a, b) => a.score - b.score);
+    // ---- Klossgolf: fake state, animated like main.js would drive it (every frame)
+    const qs = new URLSearchParams(location.search);
+    if (qs.has('touch')) document.body.classList.add('touch');
+    const KS = { phase: PHASE.PLAYING, hole: 3, holes: 5, name: 'Dammen', par: 4, timeLeft: 96, strokes: 2, maxStrokes: 8,
+      holed: false, ready: true, club: 0, lie: 1, pin: 143, wind: 3.4, windDir: 0.6, power: null, mark: 0.62 };
+    let klossOn = false, charging = false, chargeT = 0, auto = false, hold = null;
+    const kg = (o) => { stop(); Object.assign(KS, o); enterKloss(); syncControls(); };
+    function enterKloss() {
+      if (klossOn) return;
+      klossOn = true;
+      hud.setGame(GAME.KLOSS);
+      hud.setRoster(golfRoster(), myId);
+    }
+    function onSwing(down) {
+      if (!klossOn) return;
+      if (down && KS.ready) { charging = true; chargeT = 0; }
+      else if (!down && charging) {
+        charging = false; log('hit at', KS.power);
+        KS.power = null; KS.ready = false; KS.strokes++; syncControls();
+        setTimeout(() => { KS.ready = true; syncControls(); }, 1500);
+      }
+    }
+    // ---- Heta paketet: fake state driven every frame, like main.js
+    const PS = { phase: PHASE.PLAYING, carrierName: 'Cecilia Långnamnsson', mine: false, fuse: 0.3, alive: 7 };
+    let paketOn = false, burn = false;
+    function enterPaket() {
+      if (paketOn) return;
+      stop(); klossOn = false; paketOn = true;
+      hud.setGame(GAME.PAKET);
+      hud.setRoster(R16, myId);
+      st({});
+    }
+    const pk = (o) => { enterPaket(); Object.assign(PS, o); };
+    let last = performance.now();
+    function frame(now) {
+      const dt = Math.min(0.1, (now - last) / 1000); last = now;
+      if (klossOn) {
+        if (charging) { chargeT += dt; const k = chargeT / 1.6; KS.power = k < 1 ? k : Math.max(0, 2 - k); if (k >= 2) KS.power = 0; }
+        else if (auto) { chargeT += dt; const k = (chargeT % 3.2) / 1.6; KS.power = k < 1 ? k : 2 - k; KS.ready = true; }
+        else if (hold != null) KS.power = hold;
+        if (KS.phase === PHASE.PLAYING && KS.timeLeft > 0 && qs.has('tick')) KS.timeLeft -= dt;
+        hud.setKloss(KS);
+      }
+      if (paketOn) {
+        if (burn) { PS.fuse += dt / 12; if (PS.fuse > 1) PS.fuse = 0; }
+        hud.setPaket(PS);
+      }
+      window.__frames = (window.__frames | 0) + 1;
+      requestAnimationFrame(frame);
+    }
+    requestAnimationFrame(frame);
+    const ctl = document.createElement('div');
+    ctl.style.cssText = 'display:flex;flex-wrap:wrap;gap:8px;width:100%;color:#fff;align-items:center';
+    ctl.innerHTML = `
+      <label>kraft <input id="k-pow" type="range" min="-0.01" max="1" step="0.01" value="-0.01"></label>
+      <label>mål <input id="k-mark" type="range" min="-0.01" max="1" step="0.01" value="0.62"></label>
+      <label>klubba <select id="k-club"></select></label>
+      <label>vind <input id="k-wind" type="range" min="0" max="6" step="0.1" value="3.4"></label>
+      <label>riktning <input id="k-wdir" type="range" min="-3.14" max="3.14" step="0.05" value="0.6"></label>
+      <label>avstånd <input id="k-pin" type="range" min="0" max="300" step="1" value="143"></label>
+      <label>lie <select id="k-lie"></select></label>`;
+    function syncControls() {
+      const $ = (i) => document.getElementById(i);
+      if (!$('k-club')) return;
+      $('k-club').value = String(KS.club);
+    }
+    const B = [
+      ['PAKET: setGame(3)', () => { paketOn = false; pk({}); }],
+      ['Paket: andra har (låg)', () => pk({ mine: false, carrierName: 'Cecilia Långnamnsson', fuse: 0.15, phase: PHASE.PLAYING })],
+      ['Paket: andra har (hög)', () => pk({ mine: false, carrierName: 'Bertil', fuse: 0.92 })],
+      ['Paket: jag har (låg)', () => pk({ mine: true, carrierName: 'Anna', fuse: 0.12 })],
+      ['Paket: jag har (mitt)', () => pk({ mine: true, carrierName: 'Anna', fuse: 0.55 })],
+      ['Paket: jag har (hög)', () => pk({ mine: true, carrierName: 'Anna', fuse: 0.95 })],
+      ['Paket: bränn 12 s', () => { burn = !burn; }],
+      ['Paket: nedräkning', () => pk({ phase: PHASE.COUNTDOWN, fuse: 0, mine: false, carrierName: 'Dragan' })],
+      ['Paket: ingen bärare', () => pk({ carrierName: null, mine: false, fuse: 0 })],
+      ['Paket: rundslut (dold)', () => pk({ phase: PHASE.ROUND_END })],
+      ['Paket: långt namn', () => pk({ phase: PHASE.PLAYING, mine: false, carrierName: 'Maximilian-Alexander Långnamnsson-Svensson', fuse: 0.4 })],
+      ['Paket: utslagen pop', () => hud.eliminated({ place: 5, total: 16, byName: null, reason: 'pop' })],
+      ['Paket: utslagen pop 2', () => hud.eliminated({ place: 2, total: 9, reason: 'pop' })],
+      ['Paket: ticker', () => { ['parcel', 'pop', 'matchStart', 'lobby', 'roundWin'].forEach((k, i) => hud.ticker(paketText(k, { name: 'Elsa-Karin', round: 2 }, ver + i), k === 'pop' ? 'ko' : k === 'roundWin' ? 'win' : 'info')); ver++; }],
+      ['Paket: matchslut', () => hud.matchEnd({ standings: roster(16).slice(0, 16), myId, game: GAME.PAKET })],
+      ['Paket: matchslut lika', () => { const s = roster(5, 0); s[1].score = s[0].score; hud.matchEnd({ standings: s, myId: 1, game: GAME.PAKET }); }],
+      ['Paket: matchslut 1', () => hud.matchEnd({ standings: roster(1, 0), myId: 1, game: GAME.PAKET })],
+      ['Värd: Heta paketet', () => { hostState.game = GAME.PAKET; hostState.phase = PHASE.LOBBY; push(); }],
+      ['Värd: Knuffkampen', () => { hostState.game = GAME.KNUFF; hostState.phase = PHASE.LOBBY; push(); }],
+      ['KLOSS: setGame(2)', () => { paketOn = false; klossOn = false; kg({}); }],
+      ['Kloss spel', () => kg({ phase: PHASE.PLAYING, ready: true, holed: false, club: Math.max(0, KS.club), timeLeft: 96 })],
+      ['Kloss laddar (auto)', () => { kg({ ready: true, club: Math.max(0, KS.club), holed: false }); auto = true; hold = null; }],
+      ['Kraft 0 / .3 / .62 / 1', () => { auto = false; const v = [0, 0.3, 0.62, 1]; hold = v[(v.indexOf(hold) + 1) % 4]; }],
+      ['Kraft null', () => { auto = false; hold = null; KS.power = null; }],
+      ['Klubba +1', () => { KS.club = (KS.club + 1) % CLUBS.length; }],
+      ['Kloss ej redo', () => kg({ ready: false, holed: false, power: null })],
+      ['Kloss i hål', () => kg({ ready: false, holed: true, strokes: 3 })],
+      ['Kloss slagen slut', () => kg({ ready: false, holed: false, strokes: 8 })],
+      ['Kloss intro-fas', () => kg({ phase: PHASE.COUNTDOWN, ready: false, timeLeft: -1, strokes: 0 })],
+      ['Kloss övning', () => kg({ phase: PHASE.LOBBY, ready: true, strokes: 0, maxStrokes: 0, timeLeft: -1, hole: 1, holes: 1, name: 'Övningsbanan', par: 3 })],
+      ['Kloss värd (club -1)', () => kg({ phase: PHASE.PLAYING, club: -1, ready: false, power: null })],
+      ['Kloss klocka 12..0', () => { kg({ timeLeft: 12 }); qs.set('tick', '1'); }],
+      ['Kloss vind 0', () => { KS.wind = 0; }],
+      ['Kloss vind 6', () => { KS.wind = 6; KS.windDir = -2.2; }],
+      ['Kloss lie: bunker', () => { KS.lie = 3; KS.pin = 38.4; }],
+      ['Kloss lie: green', () => { KS.lie = 2; KS.pin = 4.6; KS.club = 3; }],
+      ['Kloss lie: vatten', () => { KS.lie = 4; }],
+      ['Kloss ticker', () => { ['holed', 'water', 'sand', 'oob', 'intro', 'holeWin'].forEach((k, i) => hud.ticker(klossText(k, { name: 'Anna', strokes: 3, par: 4, hole: 3, dunk: false }, ver + i), k === 'holed' || k === 'holeWin' ? 'win' : k === 'intro' ? 'info' : 'ko')); ver++; }],
+      ['Kloss matchslut', () => hud.matchEnd({ standings: golfStand(), myId, game: GAME.KLOSS })],
+      ['Kloss matchslut lika', () => { const s = golfStand(); s[1].score = s[0].score; hud.matchEnd({ standings: s, myId, game: GAME.KLOSS }); }],
+      ['Värd: Klossgolf', () => { hostState.game = GAME.KLOSS; hostState.phase = PHASE.LOBBY; push(); }],
+      ['Touch-layout på/av', () => document.body.classList.toggle('touch')],
+      ['GOLF: setGame(1)', () => { paketOn = false; hud.setGame(GAME.GOLF); hud.setRoster(golfRoster(), myId); gs({}); }],
+      ['setGame(0)', () => { paketOn = false; hud.setGame(GAME.KNUFF); hud.setRoster(R16, myId); st({}); }],
+      ['Golf spel', () => { stop(); gs({}); }],
+      ['Golf väntar', () => { stop(); gs({ canShoot: false }); }],
+      ['Golf i hål', () => { stop(); gs({ holed: true, canShoot: false, strokes: 3 }); }],
+      ['Golf klocka 12..0', () => { stop(); let t = 12; warnTimer = setInterval(() => { t -= 0.25; gs({ timeLeft: Math.max(0, t) }); if (t <= 0) stop(); }, 250); }],
+      ['Golf lobby', () => { stop(); gs({ phase: PHASE.LOBBY, timeLeft: -1, strokes: 0 }); }],
+      ['Golf intro-fas', () => { stop(); gs({ phase: PHASE.COUNTDOWN, timeLeft: -1, strokes: 0, canShoot: false }); }],
+      ['Aim 0..1', () => { stop(); let f = 0; warnTimer = setInterval(() => { f += 0.02; hud.setAim(Math.min(1, f)); if (f >= 1.2) { stop(); hud.setAim(null); } }, 30); }],
+      ['Aim null', () => { stop(); hud.setAim(null); }],
+      ['Hål-intro', () => hud.holeIntro({ hole: 2, holes: 5, name: 'Väderkvarnen', par: 3 })],
+      ['Hål-intro långt', () => hud.holeIntro({ hole: 5, holes: 5, name: 'Den Mycket Långa Slingrande Banan', par: 4 })],
+      ['Holed HIO', () => hud.holed({ strokes: 1, par: 3 })],
+      ['Holed birdie', () => hud.holed({ strokes: 2, par: 3 })],
+      ['Holed par', () => hud.holed({ strokes: 3, par: 3 })],
+      ['Holed bogey', () => hud.holed({ strokes: 4, par: 3 })],
+      ['Holed +4', () => hud.holed({ strokes: 7, par: 3 })],
+      ['Hål-slut', () => hud.holeEnd({ hole: 2, holes: 5, name: 'Väderkvarnen', par: 3, top: golfTop })],
+      ['Hål-slut tom', () => hud.holeEnd({ hole: 2, holes: 5, name: 'Väderkvarnen', par: 3, top: [] })],
+      ['Golf matchslut', () => hud.matchEnd({ standings: golfStand(), myId, game: GAME.GOLF })],
+      ['Golf matchslut lika', () => { const s = golfStand(); s[1].score = s[0].score; hud.matchEnd({ standings: s, myId, game: GAME.GOLF }); }],
+      ['Golf ticker', () => { hud.ticker(golfText('holed', { name: 'Anna', strokes: 1, par: 3 }, ver++), 'win'); hud.ticker(golfText('oob', { name: 'Bertil' }, ver), 'ko'); hud.ticker(golfText('intro', { hole: 2, name: 'Väderkvarnen', par: 3 }, ver), 'info'); }],
+      ['Golf ticker 2', () => { hud.ticker(golfText('holeWin', { name: 'Elsa', strokes: 2 }, ver++), 'win'); hud.ticker(golfText('practice', {}, ver), 'info'); hud.ticker(golfText('matchStart', {}, ver), 'info'); }],
+      ['Join', () => hud.showJoin({ name: 'Cecilia', code: 'kxqp', onSubmit: (n, c) => { log('submit', n, c); } })],
+      ['Join-fel', () => hud.setJoinError('Fel kod. Kolla med värden.')],
+      ['Dölj join', () => hud.hideJoin()],
+      ['Ansl. tappad', () => hud.setConnection('reconnecting')],
+      ['Ansl. ok', () => hud.setConnection('ok')],
+      ['Roster 16', () => hud.setRoster(R16, myId)],
+      ['Roster 16, jag sist', () => { myId = 16; hud.setRoster(R16, myId); }],
+      ['Roster 3', () => hud.setRoster(roster(3, 0), 2)],
+      ['Roster 30', () => hud.setRoster(roster(30, 0).map((p, i) => ({ ...p, name: names[i % 16] + (i > 15 ? ' ' + i : '') })), 2)],
+      ['Roster 1', () => hud.setRoster(roster(1, 0), 1)],
+      ['Roster XSS', () => hud.setRoster([{ id: 1, name: '<img src=x onerror=alert(1)>', color: 2, bot: false, score: 3, kos: 1, on: true }], 1)],
+      ['Status lobby', () => { stop(); st({ phase: PHASE.LOBBY }); }],
+      ['Status spel', () => { stop(); st({}); }],
+      ['Status varning', () => { stop(); let w = 3.4; warnTimer = setInterval(() => { w -= 0.1; st({ warnIn: w }); if (w < 0) stop(); }, 100); }],
+      ['Status avgörande', () => { stop(); st({ sudden: true, alive: 2 }); }],
+      ['Status nedräkn.', () => { stop(); st({ phase: PHASE.COUNTDOWN }); }],
+      ['Dash 0..1', () => { stop(); let f = 1; warnTimer = setInterval(() => { f -= 0.01; hud.setDash(Math.max(0, f)); if (f < 0) stop(); }, 25); }],
+      ['Dash använd', () => hud.setDash(1)],
+      ['Ticker KO', () => hud.ticker(koText('Cecilia Långnamnsson', 'Bertil', ver++), 'ko')],
+      ['Ticker solo', () => hud.ticker(koText('Anna', null, ver++), 'ko')],
+      ['Ticker info', () => hud.ticker(infoText('ringFall'), 'info')],
+      ['Ticker varn', () => hud.ticker(infoText('ringWarn'), 'warn')],
+      ['Ticker vinst', () => hud.ticker(infoText('roundWin', { name: 'Elsa-Karin', round: 2 }), 'win')],
+      ['Ticker x5', () => { for (let i = 0; i < 5; i++) hud.ticker(koText(names[i], names[i + 1], i + ver++), 'ko'); }],
+      ['Nedräkning', () => { let n = 3; hud.countdown(n); const t = setInterval(() => { n--; hud.countdown(n); if (n < 0) clearInterval(t); }, 1000); }],
+      ['Utslagen', () => hud.eliminated({ place: 5, total: 16, byName: 'Cecilia Långnamnsson' })],
+      ['Utslagen egen', () => hud.eliminated({ place: 12, total: 16, byName: null })],
+      ['Rundslut', () => hud.roundEnd({ round: 2, rounds: 3, winnerName: 'Elsa-Karin', youWon: false, top: [{ name: 'Elsa-Karin', color: 4, pts: 5 }, { name: 'Cecilia Långnamnsson', color: 2, pts: 3 }, { name: 'Bertil', color: 1, pts: 2 }] })],
+      ['Rundslut du vann', () => hud.roundEnd({ round: 3, rounds: 3, winnerName: 'Anna', youWon: true, top: [{ name: 'Anna', color: 0, pts: 5 }] })],
+      ['Matchslut', () => hud.matchEnd({ standings: roster(16).slice(0, 16), myId })],
+      ['Matchslut långt namn', () => { const s = roster(8); s[0].name = 'Maximilian-Alexander'; hud.matchEnd({ standings: s, myId: 3 }); }],
+      ['Matchslut 1', () => hud.matchEnd({ standings: roster(1, 0), myId: 1 })],
+      ['Matchslut lika', () => { const s = roster(5, 0); s[1].score = s[0].score; hud.matchEnd({ standings: s, myId: 1 }); }],
+      ['Matchslut bot', () => { const s = roster(6, 0); s[0].bot = true; hud.matchEnd({ standings: s, myId: 3 }); }],
+      ['Rensa', () => hud.clearOverlays()],
+      ['Värd: lobby', () => { hostState.phase = PHASE.LOBBY; push(); }],
+      ['Värd: spel', () => { hostState.phase = PHASE.PLAYING; push(); }],
+      ['Värd: slut', () => { hostState.phase = PHASE.MATCH_END; push(); }],
+    ];
+    const bar = document.getElementById('bar');
+    bar.appendChild(ctl);
+    for (const [label, fn] of B) {
+      const b = document.createElement('button');
+      b.textContent = label; b.type = 'button';
+      b.addEventListener('click', fn);
+      bar.appendChild(b);
+    }
+    document.getElementById('tg').addEventListener('click', () => bar.classList.toggle('min'));
+    window.__bar = bar;
+
+    const cs = document.getElementById('k-club');
+    CLUBS.forEach((c, i) => { const o = document.createElement('option'); o.value = i; o.textContent = c.name; cs.appendChild(o); });
+    const ls = document.getElementById('k-lie');
+    SURFACE.forEach((c, i) => { const o = document.createElement('option'); o.value = i; o.textContent = c.name; ls.appendChild(o); });
+    ls.value = String(KS.lie);
+    cs.onchange = () => { KS.club = +cs.value; };
+    ls.onchange = () => { KS.lie = +ls.value; };
+    document.getElementById('k-pow').oninput = (e) => { auto = false; const v = +e.target.value; hold = v < 0 ? null : v; if (v < 0) KS.power = null; };
+    document.getElementById('k-mark').oninput = (e) => { const v = +e.target.value; KS.mark = v < 0 ? null : v; };
+    document.getElementById('k-wind').oninput = (e) => { KS.wind = +e.target.value; };
+    document.getElementById('k-wdir').oninput = (e) => { KS.windDir = +e.target.value; };
+    document.getElementById('k-pin').oninput = (e) => { KS.pin = +e.target.value; };
+    // URL shortcuts for screenshots: ?kloss, ?touch, ?host, ?nobar, ?club=2, ?power=0.6, ?wind=2.5, ?phase=lobby
+    if (qs.has('nobar')) { bar.classList.add('min'); document.getElementById('tg').style.display = 'none'; }
+    if (qs.has('club')) KS.club = +qs.get('club');
+    if (qs.has('power')) hold = +qs.get('power');
+    if (qs.has('wind')) KS.wind = +qs.get('wind');
+    if (qs.has('lie')) KS.lie = +qs.get('lie');
+    if (qs.get('state') === 'wait') { KS.ready = false; }
+    if (qs.get('state') === 'holed') { KS.ready = false; KS.holed = true; }
+    if (qs.has('hostview')) { KS.club = -1; KS.ready = false; }
+    // ?paket, ?mine, ?fuse=0.8, ?carrier=Name, ?pop for screenshots
+    if (qs.has('paket')) {
+      PS.mine = qs.has('mine'); PS.fuse = qs.has('fuse') ? +qs.get('fuse') : 0.3;
+      if (qs.has('carrier')) PS.carrierName = qs.get('carrier');
+      if (qs.has('burn')) burn = true;
+    }
+    // Initial state
+    hud.setRoster(R16, myId);
+    st({});
+    hud.setDash(0);
+    if (host) push();
+    if (qs.has('paket')) {
+      enterPaket();
+      if (host) { hostState.game = GAME.PAKET; hostState.phase = qs.has('lobby') ? PHASE.LOBBY : PHASE.PLAYING; push(); }
+      if (qs.has('pop')) hud.eliminated({ place: 5, total: 16, byName: null, reason: 'pop' });
+    } else if (qs.has('kloss')) { stop(); enterKloss(); syncControls(); if (host) { hostState.game = GAME.KLOSS; hostState.phase = qs.has('lobby') ? PHASE.LOBBY : PHASE.PLAYING; push(); } }
+    else if (host && qs.has('lobby')) { hostState.phase = PHASE.LOBBY; push(); }
+  </script>
+</body>
+</html>

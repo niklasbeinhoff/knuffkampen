@@ -1,0 +1,254 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Knuffkampen audio test</title>
+<style>
+  body { font: 15px system-ui, sans-serif; max-width: 640px; margin: 24px auto; padding: 0 16px; background: #eef4fa; color: #223; }
+  h1 { font-size: 20px; }
+  fieldset { border: 1px solid #b8c8d8; border-radius: 8px; margin: 12px 0; }
+  button { font: inherit; padding: 6px 12px; margin: 3px; border-radius: 6px; border: 1px solid #89a; background: #fff; cursor: pointer; }
+  button:hover { background: #dfeaff; }
+  label { display: block; margin: 6px 0; }
+  input[type=range] { width: 260px; vertical-align: middle; }
+  #log { font: 12px ui-monospace, monospace; background: #fff; border: 1px solid #b8c8d8; padding: 8px; height: 120px; overflow: auto; white-space: pre-wrap; }
+</style>
+</head>
+<body>
+<h1>Knuffkampen audio test</h1>
+
+<fieldset><legend>Context</legend>
+  <button id="unlock">unlock()</button>
+  <button id="pre">Call every method (use before unlock)</button>
+  <button id="mute">Mute</button> <span id="state"></span>
+</fieldset>
+
+<fieldset><legend>Bump</legend>
+  <label>strength <input id="str" type="range" min="0" max="1" step="0.01" value="0.5"> <span id="strv">0.50</span></label>
+  <label>pan <input id="pan" type="range" min="-1" max="1" step="0.01" value="0"> <span id="panv">0.00</span></label>
+  <button data-a="bump">bump(strength, pan)</button>
+  <button id="burst">Burst: 30 bumps in one frame</button>
+</fieldset>
+
+<fieldset><legend>Effects</legend>
+  <button data-a="dash" data-arg="false">dash(false)</button>
+  <button data-a="dash" data-arg="true">dash(true)</button>
+  <button data-a="fall" data-arg="false">fall(false)</button>
+  <button data-a="fall" data-arg="true">fall(true)</button>
+  <button data-a="ko">ko</button>
+  <button data-a="countdown" data-arg="3">countdown(3)</button>
+  <button data-a="countdown" data-arg="2">countdown(2)</button>
+  <button data-a="countdown" data-arg="1">countdown(1)</button>
+  <button data-a="countdown" data-arg="0">countdown(0)</button>
+  <button data-a="ringWarn">ringWarn</button>
+  <button data-a="ringFall">ringFall</button>
+  <button data-a="win">win</button>
+  <button data-a="lose">lose</button>
+  <button data-a="join">join</button>
+</fieldset>
+
+<fieldset><legend>Golf</legend>
+  <button data-a="putt" data-arg="0.2">putt(0.2)</button>
+  <button data-a="putt" data-arg="1">putt(1)</button>
+  <button id="puttown">putt(0.6, own)</button>
+  <button id="knock0">knock rail</button>
+  <button id="knock1">knock bumper</button>
+  <button id="knock2">knock spinner</button>
+  <button id="kburst">Burst: 40 knocks in one frame</button>
+  <button data-a="cup" data-arg="true">cup(true)</button>
+  <button data-a="cup" data-arg="false">cup(false)</button>
+  <button data-a="holeInOne">holeInOne</button>
+  <button data-a="oob" data-arg="true">oob(true)</button>
+  <button data-a="oob" data-arg="false">oob(false)</button>
+  <button data-a="boost">boost</button>
+</fieldset>
+
+<fieldset><legend>Klossgolf</legend>
+  <label>land speed <input id="lspd" type="range" min="0" max="1" step="0.01" value="0.7"> <span id="lspdv">0.70</span></label>
+  <button data-kc="0">swing Driver (full)</button>
+  <button data-kc="1">swing Järn</button>
+  <button data-kc="2">swing Wedge</button>
+  <button data-kc="3">swing Putter</button>
+  <button id="kswown">swing Driver, 0.5, own</button>
+  <br>
+  <button data-ls="0">land Ruff</button>
+  <button data-ls="1">land Fairway</button>
+  <button data-ls="2">land Green</button>
+  <button data-ls="3">land Bunker</button>
+  <button data-ls="4">land Vatten (silent)</button>
+  <button data-ls="5">land Tee</button>
+  <button data-ls="6">land Utanför (silent)</button>
+  <br>
+  <button data-a="splash" data-arg="true">splash(true)</button>
+  <button data-a="splash" data-arg="false">splash(false)</button>
+  <button data-a="tree">tree</button>
+  <button id="lburst">Burst: 40 landings in one frame</button>
+</fieldset>
+
+<fieldset><legend>Heta paketet</legend>
+  <label>urgency <input id="urg" type="range" min="0" max="1" step="0.01" value="0"> <span id="urgv">0.00</span></label>
+  <button id="ptick">tick(urgency)</button>
+  <button data-a="pass" data-arg="false">pass(false)</button>
+  <button data-a="pass" data-arg="true">pass(true)</button>
+  <button data-a="pop" data-arg="false">pop(false)</button>
+  <button data-a="pop" data-arg="true">pop(true)</button>
+  <button data-m="paket">music('paket')</button>
+</fieldset>
+
+<fieldset><legend>Silent check (no speakers)</legend>
+  <p style="margin:4px 0">Renders the Klossgolf and Heta paketet sounds into an OfflineAudioContext and prints peak level and length. Nothing is played.</p>
+  <button id="offline">Render offline and measure</button>
+</fieldset>
+
+<fieldset><legend>Music</legend>
+  <button data-m="golf">music('golf')</button>
+  <button data-m="kloss">music('kloss')</button>
+  <button data-m="paket">music('paket')</button>
+  <button data-m="lobby">music('lobby')</button>
+  <button data-m="game">music('game')</button>
+  <button data-m="off">music('off')</button>
+</fieldset>
+
+<div id="log"></div>
+
+<script type="module">
+import { audio } from '../js/audio.js';
+
+const $ = (s) => document.querySelector(s);
+const log = (t) => { const l = $('#log'); l.textContent += t + '\n'; l.scrollTop = l.scrollHeight; };
+const str = $('#str'), pan = $('#pan');
+const sync = () => { $('#strv').textContent = (+str.value).toFixed(2); $('#panv').textContent = (+pan.value).toFixed(2); };
+str.oninput = pan.oninput = sync;
+const state = () => { $('#state').textContent = audio.isMuted() ? 'muted' : 'sound on'; $('#mute').textContent = audio.isMuted() ? 'Unmute' : 'Mute'; };
+state();
+
+const run = (name, ...args) => {
+  try { audio.unlock(); audio[name](...args); log(name + '(' + args.join(', ') + ')'); }
+  catch (e) { log('THROW in ' + name + ': ' + e); console.error(e); }
+};
+
+$('#unlock').onclick = () => { audio.unlock(); log('unlock()'); };
+$('#mute').onclick = () => { audio.setMuted(!audio.isMuted()); state(); log('muted=' + audio.isMuted()); };
+
+$('#pre').onclick = () => {
+  // Deliberately no unlock(): everything must be silent and must not throw.
+  try {
+    audio.bump(0.8, 0); audio.dash(true); audio.fall(true); audio.ko(); audio.countdown(3); audio.countdown(0);
+    audio.ringWarn(); audio.ringFall(); audio.win(); audio.lose(); audio.join(); audio.music('off');
+    audio.putt(0.7, true); audio.knock(0.8, 1, 0.3); audio.cup(true); audio.holeInOne(); audio.oob(false); audio.boost();
+    audio.putt(); audio.knock(NaN, 'x', 'y'); audio.cup(); audio.oob();
+    audio.tick(0.5); audio.tick(); audio.tick(NaN); audio.pass(true); audio.pass(); audio.pop(true); audio.pop(); audio.music('paket'); audio.music('off');
+    audio.swing(0, 1, true); audio.swing(); audio.swing(NaN, 'x'); audio.land(1, 0.5, 0); audio.land(); audio.land('x', NaN, NaN); audio.splash(true); audio.splash(); audio.tree();
+    audio.bump(); audio.bump(NaN, 'x'); audio.countdown();
+    log('pre-unlock calls: ok (should be silent)');
+  } catch (e) { log('THROW pre-unlock: ' + e); console.error(e); }
+};
+
+document.querySelectorAll('button[data-a]').forEach((b) => {
+  b.onclick = () => {
+    const a = b.dataset.a;
+    if (a === 'bump') return run('bump', +str.value, +pan.value);
+    const arg = b.dataset.arg;
+    if (arg === undefined) return run(a);
+    run(a, arg === 'true' ? true : arg === 'false' ? false : +arg);
+  };
+});
+$('#puttown').onclick = () => run('putt', 0.6, true);
+[0, 1, 2].forEach((k) => { $('#knock' + k).onclick = () => run('knock', +str.value, k, +pan.value); });
+$('#kburst').onclick = () => {
+  audio.unlock();
+  for (let i = 0; i < 40; i++) audio.knock(Math.random(), i % 3, Math.random() * 2 - 1);
+  log('40 knocks in one frame (only a few should sound)');
+};
+$('#burst').onclick = () => {
+  audio.unlock();
+  for (let i = 0; i < 30; i++) audio.bump(Math.random(), Math.random() * 2 - 1);
+  log('30 bumps in one frame');
+};
+$('#urg').oninput = () => { $('#urgv').textContent = (+$('#urg').value).toFixed(2); };
+$('#ptick').onclick = () => run('tick', +$('#urg').value);
+$('#lspd').oninput = () => { $('#lspdv').textContent = (+$('#lspd').value).toFixed(2); };
+document.querySelectorAll('button[data-kc]').forEach((b) => { b.onclick = () => run('swing', +b.dataset.kc, 1, false); });
+$('#kswown').onclick = () => run('swing', 0, 0.5, true);
+document.querySelectorAll('button[data-ls]').forEach((b) => { b.onclick = () => run('land', +b.dataset.ls, +$('#lspd').value, +pan.value); });
+$('#lburst').onclick = () => {
+  audio.unlock();
+  for (let i = 0; i < 40; i++) audio.land(i % 4, Math.random(), Math.random() * 2 - 1);
+  log('40 landings in one frame (only a few should sound)');
+};
+
+// Silent measurement: swap AudioContext for an OfflineAudioContext that claims to be
+// running, load a fresh copy of audio.js, schedule one sound and render it to a buffer.
+async function renderOne(n, call, muted, secs, music) {
+  const Real = window.AudioContext, RealW = window.webkitAudioContext;
+  let oc = null;
+  window.AudioContext = window.webkitAudioContext = class extends OfflineAudioContext {
+    constructor() {
+      super(2, 44100 * (secs || 3), 44100);
+      Object.defineProperty(this, 'state', { get: () => 'running' });
+      oc = this;
+    }
+  };
+  try {
+    const m = await import('../js/audio.js?offline=' + n + '_' + Math.random());
+    m.audio.unlock();
+    if (muted) m.audio.setMuted(true);
+    call(m.audio);
+    if (music) {
+      // the music scheduler runs on a timer against ctx.currentTime: pause the offline
+      // render every half second so that it can queue the next notes
+      for (let at = 0.5; at < secs - 0.5; at += 0.5) {
+        oc.suspend(at).then(() => new Promise((r) => setTimeout(r, 200))).then(() => oc.resume());
+      }
+    }
+    const buf = await oc.startRendering();
+    if (music) m.audio.music('off');
+    let peak = 0, last = 0, bad = 0;
+    for (let c = 0; c < buf.numberOfChannels; c++) {
+      const d = buf.getChannelData(c);
+      for (let i = 0; i < d.length; i++) {
+        const v = d[i];
+        if (!isFinite(v)) { bad++; continue; }
+        const a = Math.abs(v);
+        if (a > peak) peak = a;
+        if (a > 1e-4 && i > last) last = i;
+      }
+    }
+    return { peak, len: last / 44100, bad };
+  } finally {
+    window.AudioContext = Real; window.webkitAudioContext = RealW;
+  }
+}
+$('#offline').onclick = async () => {
+  const cases = [
+    ['swing Driver full own', (a) => a.swing(0, 1, true)], ['swing Driver 0.2', (a) => a.swing(0, 0.2, false)],
+    ['swing Järn', (a) => a.swing(1, 0.8, false)], ['swing Wedge', (a) => a.swing(2, 0.8, false)], ['swing Putter', (a) => a.swing(3, 0.5, true)],
+    ['swing junk args', (a) => a.swing(NaN, 'x', 1)],
+    ['land Ruff', (a) => a.land(0, 0.8, -0.5)], ['land Fairway', (a) => a.land(1, 0.8, 0)], ['land Green', (a) => a.land(2, 0.8, 0.5)],
+    ['land Bunker', (a) => a.land(3, 0.8, 0)], ['land Tee', (a) => a.land(5, 0.8, 0)], ['land Vatten (expect silent)', (a) => a.land(4, 0.8, 0)],
+    ['land Utanför (expect silent)', (a) => a.land(6, 0.8, 0)], ['land speed 0.01 (expect silent)', (a) => a.land(1, 0.01, 0)],
+    ['land 40 in one frame', (a) => { for (let i = 0; i < 40; i++) a.land(i % 4, 1, 0); }],
+    ['splash own', (a) => a.splash(true)], ['tree', (a) => a.tree()],
+    ['swing but muted (expect silent)', (a) => a.swing(0, 1, true), true],
+    ['tick 0', (a) => a.tick(0)], ['tick 1', (a) => a.tick(1)], ['tick junk', (a) => a.tick('x')],
+    ['pass own', (a) => a.pass(true)], ['pass other', (a) => a.pass(false)],
+    ['pop own', (a) => a.pop(true)], ['pop other', (a) => a.pop(false)],
+    ['pop but muted (expect silent)', (a) => a.pop(true), true],
+    ['music kloss, 8 s (for comparison)', (a) => a.music('kloss'), false, 9, true],
+    ['music paket, 8 s', (a) => a.music('paket'), false, 9, true],
+  ];
+  log('offline render, nothing is played:');
+  for (let i = 0; i < cases.length; i++) {
+    const [name, fn, muted, secs, music] = cases[i];
+    try {
+      const r = await renderOne(i, fn, muted, secs, music);
+      const db = r.peak > 0 ? (20 * Math.log10(r.peak)).toFixed(1) + ' dBFS' : 'silent';
+      log('  ' + name + ': peak ' + db + ', length ' + r.len.toFixed(2) + ' s' + (r.bad ? ', NON-FINITE SAMPLES: ' + r.bad : ''));
+    } catch (e) { log('  THROW in ' + name + ': ' + e); console.error(e); }
+  }
+};
+document.querySelectorAll('button[data-m]').forEach((b) => { b.onclick = () => run('music', b.dataset.m); });
+</script>
+</body>
+</html>

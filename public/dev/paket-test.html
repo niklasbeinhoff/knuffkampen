@@ -1,0 +1,329 @@
+<!doctype html>
+<html lang="sv">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, user-scalable=no">
+  <meta name="robots" content="noindex, nofollow">
+  <title>Heta paketet – scene test</title>
+  <style>
+    html, body { margin: 0; height: 100%; overflow: hidden; background: #0b1230; }
+    #c { position: fixed; left: 0; top: 0; width: 100%; height: 100%; display: block; touch-action: none; }
+    #stat {
+      position: fixed; left: 10px; top: 10px; padding: 5px 9px; border-radius: 8px;
+      font: 12px/1.45 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+      color: #fff; background: rgba(10, 18, 44, 0.62); white-space: pre; pointer-events: none;
+    }
+    #bar { position: fixed; left: 10px; bottom: 10px; right: 10px; display: flex; flex-wrap: wrap; gap: 6px; }
+    #bar button {
+      font: 600 13px/1 system-ui, sans-serif; color: #fff; background: rgba(10, 18, 44, 0.72);
+      border: 1px solid rgba(255, 255, 255, 0.25); border-radius: 8px; padding: 8px 11px; cursor: pointer;
+    }
+    #bar button.on { background: #3d6cff; border-color: #9db4ff; }
+  </style>
+  <script type="importmap">
+    {
+      "imports": {
+        "three": "/vendor/three/build/three.module.js",
+        "three/addons/": "/vendor/three/examples/jsm/"
+      }
+    }
+  </script>
+</head>
+<body>
+  <canvas id="c"></canvas>
+  <div id="stat"></div>
+  <div id="bar">
+    <button id="bPlayer">Spelarvy</button>
+    <button id="bHost">Värdvy</button>
+    <button id="bPass">Passa</button>
+    <button id="bPop">Pang!</button>
+    <button id="bNew">Nytt paket</button>
+    <button id="bPause">Paus</button>
+  </div>
+  <script type="module">
+    // Fake Heta paketet match for judging the scene without the game server (no audio).
+    //   ?spectator=1   host camera        ?n=8   body count (2..40)
+    //   ?q=low|medium|high                ?fs=6  fuse length in seconds (default: the real rule)
+    //   ?pin=0.9       hold the fuse at that value (never pops)
+    // Keys: WASD / arrows steer body 0 (otherwise it drives itself), space dashes.
+    import { createScene } from '/js/scene.js';
+    import { SIM, arenaRadius, ringsForPlayers, createBody, placeBody, step } from '/shared/sim.js';
+    import { PHASE, ST, PALETTE, GAME } from '/shared/protocol.js';
+    import { PAKET, fuseScale } from '/shared/paket.js';
+
+    const params = new URLSearchParams(location.search);
+    const spectator = params.get('spectator') === '1';
+    const N = Math.max(2, Math.min(40, parseInt(params.get('n'), 10) || 8));
+    const fuseSec = Number(params.get('fs')) || 0;
+    let pin = params.has('pin') ? Number(params.get('pin')) : null;
+    const clamp = (v, a, b) => Math.max(a, Math.min(b, v));
+
+    const scene = createScene(document.getElementById('c'), { spectator });
+    window.__scene = scene;
+    if (params.get('q')) scene.setQuality(params.get('q'));
+    scene.setGame(GAME.PAKET);
+
+    const NAMES = ['Astrid', 'Björn', 'Cilla', 'Dag', 'Ebba', 'Folke', 'Greta', 'Hugo', 'Ines', 'Jarl', 'Kajsa', 'Love', 'Maja', 'Nils',
+      'Olle', 'Pia', 'Runa', 'Sixten', 'Tyra', 'Ulf', 'Vera', 'Åke', 'Saga', 'Tove', 'Elsa', 'Alva', 'Axel', 'Liv', 'Sven', 'Örjan'];
+    const bots = Math.min(12, Math.floor(N * 0.25));
+    const bodies = [];
+    for (let i = 0; i < N; i++) {
+      const b = createBody(i);
+      b.px = 0; b.py = 0; b.pz = 0;
+      b.ai = { t: 0, jx: 0, jy: 0 };
+      bodies.push(b);
+      const bot = i >= N - bots;
+      scene.upsertPlayer(i, {
+        name: bot ? `Bot ${i - (N - bots) + 1}` : i === 0 && !spectator ? 'Du' : NAMES[i % NAMES.length],
+        color: i % PALETTE.length, isMe: !spectator && i === 0, bot,
+      });
+    }
+
+    const G = { phase: PHASE.LOBBY, pt: 0, r0: 3, now: 0, paused: false, round: 0, winner: null, confT: 0,
+      carrier: -1, fuse: 0, fuseT: 0, burnt: 0, nextT: -1, lastPass: -9, prevCarrier: -1, lastKeys: -9 };
+    const STEP = 1 / SIM.HZ;
+    const events = [];
+    const live = () => bodies.filter((b) => !b.falling && !b.out);
+
+    function newFuse() {
+      G.fuseT = (fuseSec || PAKET.FUSE_MIN + Math.random() * (PAKET.FUSE_MAX - PAKET.FUSE_MIN)) * fuseScale(live().length);
+      G.burnt = 0; G.fuse = 0;
+    }
+    function giveParcel(id) {
+      if (id == null) { const l = live(); if (!l.length) return; id = l[(Math.random() * l.length) | 0].id; }
+      G.carrier = id; G.prevCarrier = -1; G.nextT = -1; G.lastPass = G.now;
+      newFuse();
+    }
+    function passTo(id) {
+      const from = G.carrier;
+      G.prevCarrier = from; G.carrier = id; G.lastPass = G.now;
+      scene.fx.pass(from, id);
+    }
+    function popNow() {
+      if (G.carrier < 0) return;
+      const id = G.carrier;
+      scene.fx.pop(id);
+      bodies[id].out = true;
+      G.carrier = -1; G.fuse = 0; G.nextT = PAKET.NEXT_T;
+    }
+
+    function startRound() {
+      G.round++;
+      G.r0 = ringsForPlayers(N);
+      scene.setArena(G.r0);
+      const R = arenaRadius(G.r0);
+      bodies.forEach((b, i) => {
+        const r = R * 0.8 * Math.sqrt((i + 0.5) / N), a = i * 2.39996 + G.round;
+        placeBody(b, r * Math.cos(a), r * Math.sin(a), a + Math.PI);
+        b.px = b.x; b.py = b.y; b.pz = 0;
+        b.frozen = true; b.ai.t = 0;
+      });
+      G.phase = PHASE.COUNTDOWN; G.pt = SIM.COUNTDOWN_T; G.winner = null;
+      giveParcel();
+    }
+
+    const keys = new Set();
+    let dashKey = false;
+    addEventListener('keydown', (e) => {
+      if (e.code === 'Space') { if (!e.repeat) dashKey = true; e.preventDefault(); return; }
+      keys.add(e.code); G.lastKeys = G.now;
+      if (e.code.startsWith('Arrow')) e.preventDefault();
+    });
+    addEventListener('keyup', (e) => keys.delete(e.code));
+    addEventListener('blur', () => keys.clear());
+    function keyInput() {
+      let x = 0, y = 0;
+      if (keys.has('KeyA') || keys.has('ArrowLeft')) x -= 1;
+      if (keys.has('KeyD') || keys.has('ArrowRight')) x += 1;
+      if (keys.has('KeyW') || keys.has('ArrowUp')) y -= 1;
+      if (keys.has('KeyS') || keys.has('ArrowDown')) y += 1;
+      const l = Math.hypot(x, y);
+      return l > 1 ? { x: x / l, y: y / l } : { x, y };
+    }
+    const manual = () => !spectator && G.now - G.lastKeys < 4;
+
+    // bots: the carrier chases, everyone else runs from it and keeps off the edge
+    function think(b, dt) {
+      if (b.falling || b.out || b.frozen) { b.ix = 0; b.iy = 0; return; }
+      const ai = b.ai;
+      ai.t -= dt;
+      if (ai.t <= 0) { ai.t = 0.4 + Math.random() * 0.8; ai.jx = (Math.random() - 0.5); ai.jy = (Math.random() - 0.5); }
+      const R = arenaRadius(G.r0), r = Math.hypot(b.x, b.y);
+      let tx = 0, ty = 0;
+      const c = G.carrier >= 0 ? bodies[G.carrier] : null;
+      if (c === b) {
+        let best = null, bd = 1e9;
+        for (const o of live()) {
+          if (o === b || (o.id === G.prevCarrier && G.now - G.lastPass < PAKET.PASS_BACK)) continue;
+          const d = Math.hypot(o.x - b.x, o.y - b.y);
+          if (d < bd) { bd = d; best = o; }
+        }
+        if (best) {
+          tx = best.x - b.x; ty = best.y - b.y;
+          const tr = Math.hypot(best.x, best.y);
+          if (b.cd <= 0 && bd < 4 && bd > 1.9 && r < R - 3 && tr < R - 3 && Math.random() < dt * 2) b.dash = true;
+          tx *= 0.75; ty *= 0.75;
+        }
+      } else if (c && !c.falling) {
+        const dx = b.x - c.x, dy = b.y - c.y, d = Math.hypot(dx, dy) || 1;
+        if (d < 6) { tx = dx / d * 0.7; ty = dy / d * 0.7; }
+        tx += ai.jx * 0.4; ty += ai.jy * 0.4;
+      } else { tx = ai.jx; ty = ai.jy; }
+      if (r > R - 4) { const k = clamp((r - R + 4) / 1.6, 0, 1); tx = tx * (1 - k) - b.x / r * 2 * k; ty = ty * (1 - k) - b.y / r * 2 * k; }
+      const l = Math.hypot(tx, ty);
+      b.ix = l > 0.05 ? clamp(tx / l, -1, 1) * Math.min(1, l * 2) : 0;
+      b.iy = l > 0.05 ? clamp(ty / l, -1, 1) * Math.min(1, l * 2) : 0;
+    }
+
+    function tick(dt) {
+      G.now += dt;
+      if (G.phase === PHASE.LOBBY) startRound();
+      if (G.phase === PHASE.COUNTDOWN) {
+        G.pt -= dt;
+        if (G.pt <= 0) { G.phase = PHASE.PLAYING; for (const b of bodies) b.frozen = false; }
+      } else if (G.phase === PHASE.PLAYING) {
+        if (G.carrier >= 0) {
+          G.burnt += dt;
+          G.fuse = pin != null ? clamp(pin, 0, 1) : clamp(G.burnt / G.fuseT, 0, 1);
+          if (pin == null && G.fuse >= 1) popNow();
+        } else if (G.nextT >= 0) {
+          G.nextT -= dt;
+          if (G.nextT <= 0 && live().length > 1) giveParcel();
+        }
+        const alive = live();
+        if (alive.length <= 1) {
+          G.phase = PHASE.ROUND_END; G.pt = SIM.ROUND_END_T; G.winner = alive[0] || null; G.confT = 0; G.carrier = -1; G.nextT = -1;
+        }
+      } else if (G.phase === PHASE.ROUND_END) {
+        G.pt -= dt; G.confT -= dt;
+        const w = G.winner;
+        if (w && !w.falling && !w.out && G.confT <= 0) { G.confT = 1.1; scene.fx.confetti(w.x, w.y); }
+        if (G.pt <= 0) { for (const b of bodies) b.out = false; startRound(); }
+      }
+
+      for (const b of bodies) {
+        b.acc = b.id === G.carrier ? PAKET.CARRIER_ACC : 1;
+        b.px = b.x; b.py = b.y; b.pz = b.z;
+        if (b.id === 0 && manual()) {
+          const k = keyInput();
+          b.ix = k.x; b.iy = k.y;
+          if (dashKey) { b.dash = true; dashKey = false; }
+        } else think(b, dt);
+      }
+      events.length = 0;
+      step(bodies, arenaRadius(G.r0), dt, G.now, events);
+      for (const e of events) {
+        if (e[0] === 'dash') scene.fx.dash(e[1]);
+        else if (e[0] === 'fall') {
+          scene.fx.fall(e[1]);
+          if (e[1] === G.carrier) { G.carrier = -1; G.fuse = 0; G.nextT = PAKET.NEXT_T; }
+        } else if (e[0] === 'hit') {
+          const [, x, y, s, a, b] = e;
+          scene.fx.hit(x, y, s);
+          if (!spectator && (a === 0 || b === 0)) scene.fx.shake(Math.min(1, s / 22));
+          if (G.phase === PHASE.PLAYING && G.carrier >= 0 && (a === G.carrier || b === G.carrier)) {
+            const to = a === G.carrier ? b : a, tb = bodies[to];
+            if (tb && !tb.falling && !tb.out && G.now - G.lastPass >= PAKET.PASS_CD
+              && !(to === G.prevCarrier && G.now - G.lastPass < PAKET.PASS_BACK)) passTo(to);
+          }
+        }
+      }
+    }
+
+    function buildView(alpha) {
+      const players = [];
+      for (const b of bodies) {
+        if (b.out) continue;
+        players.push({
+          id: b.id,
+          x: b.px + (b.x - b.px) * alpha, y: b.py + (b.y - b.py) * alpha, z: b.pz + (b.z - b.pz) * alpha,
+          face: b.face,
+          st: (b.falling ? ST.FALLING : 0) | (b.charge > 0 ? ST.CHARGED : 0) | (b.frozen ? ST.FROZEN : 0),
+          cd: b.cd / SIM.DASH_CD,
+        });
+      }
+      const me = bodies[0];
+      return {
+        game: GAME.PAKET,
+        time: G.now, phase: G.phase, rings: G.r0, warnIn: -1,
+        myId: spectator ? null : 0,
+        spectate: spectator || me.out,
+        input: spectator ? { x: 0, y: 0 } : manual() ? keyInput() : { x: me.ix || 0, y: me.iy || 0 },
+        players,
+        carrier: G.carrier, fuse: G.carrier >= 0 ? G.fuse : 0,
+      };
+    }
+
+    // buttons
+    const go = (sp) => { const p = new URLSearchParams(location.search); p.set('spectator', sp ? '1' : '0'); location.search = p.toString(); };
+    document.getElementById(spectator ? 'bHost' : 'bPlayer').classList.add('on');
+    document.getElementById('bPlayer').onclick = () => go(false);
+    document.getElementById('bHost').onclick = () => go(true);
+    document.getElementById('bPass').onclick = () => {
+      if (G.carrier < 0) return;
+      const c = bodies[G.carrier];
+      const o = live().filter((b) => b !== c).sort((p, q) => Math.hypot(p.x - c.x, p.y - c.y) - Math.hypot(q.x - c.x, q.y - c.y))[0];
+      if (o) passTo(o.id);
+    };
+    document.getElementById('bPop').onclick = () => { if (G.carrier >= 0) { G.burnt = G.fuseT; pin = null; } };
+    document.getElementById('bNew').onclick = () => { if (G.carrier < 0 && live().length > 1) giveParcel(); };
+    const bPause = document.getElementById('bPause');
+    bPause.onclick = () => { G.paused = !G.paused; bPause.classList.toggle('on', G.paused); };
+
+    // debug handle for staging screenshots from the console
+    let rafTicks = 0;
+    window.__h = {
+      G, bodies, scene,
+      get raf() { return rafTicks; },
+      pause(p = true) { G.paused = p; },
+      detach(d = true) { G.detached = d; },
+      pin(f) { pin = f; },
+      pass: () => document.getElementById('bPass').onclick(),
+      pop: popNow,
+      give: giveParcel,
+      /** Advance sim and scene synchronously by `sec` seconds (works even when rAF is throttled). */
+      run(sec) { const n = Math.round(sec * SIM.HZ); for (let i = 0; i < n; i++) { tick(STEP); scene.frame(STEP, buildView(1)); } },
+      view: () => buildView(1),
+      /** Run `sec` seconds, then freeze the picture into an <img> (screenshots of a hidden, throttled pane). */
+      snap(sec = 0) {
+        G.detached = true;
+        if (sec) this.run(sec);
+        scene.frame(1 / 60, buildView(1));
+        let im = document.getElementById('snapimg');
+        if (!im) {
+          im = document.createElement('img');
+          im.id = 'snapimg';
+          im.style.cssText = 'position:fixed;left:0;top:0;width:100%;height:100%;pointer-events:none';
+          document.body.insertBefore(im, document.getElementById('stat'));
+        }
+        im.src = document.getElementById('c').toDataURL('image/png');
+        return { phase: G.phase, carrier: G.carrier, fuse: +G.fuse.toFixed(2), alive: live().length };
+      },
+    };
+
+    const stat = document.getElementById('stat');
+    let last = performance.now(), acc = 0, statT = 0;
+    function loop(now) {
+      requestAnimationFrame(loop);
+      rafTicks++;
+      const dt = Math.min(0.1, Math.max(0, (now - last) / 1000));
+      last = now;
+      if (G.detached) return;
+      if (!G.paused) {
+        acc += dt;
+        let n = 0;
+        while (acc >= STEP && n++ < 10) { tick(STEP); acc -= STEP; }
+        if (acc >= STEP) acc = 0;
+      }
+      scene.frame(G.paused ? 0 : dt, buildView(G.paused ? 1 : acc / STEP));
+      statT += dt;
+      if (statT > 0.25) {
+        statT = 0;
+        const s = scene.getStats();
+        stat.textContent = `${s.fps} fps · ${s.quality}\n${live().length}/${N} · phase ${G.phase}\nparcel ${G.carrier} · fuse ${G.fuse.toFixed(2)}`;
+      }
+    }
+    requestAnimationFrame(loop);
+  </script>
+</body>
+</html>
