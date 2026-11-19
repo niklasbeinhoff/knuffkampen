@@ -7,7 +7,9 @@
   "scripts": {
     "start": "node server/server.js",
     "dev:static": "node tools/dev-static.js",
-    "smoke": "node tools/smoke.js"
+    "smoke": "node tools/smoke.js",
+    "pages:build": "node tools/build-pages.js",
+    "pages:check": "node tools/pages-check.js"
   },
   "dependencies": {
     "three": "^0.187.0",

@@ -1,11 +1,11 @@
 // Knuffkampen – DOM overlay: join screen, status, scoreboard, ticker, results, host panel.
 // Player names are untrusted: they only ever reach the DOM through textContent.
 
-import { PHASE, PALETTE, LIMITS, GAME } from '/shared/protocol.js';
-import { SIM } from '/shared/sim.js';
-import { COURSES } from '/shared/golf.js';
-import { KCOURSES } from '/shared/klosscourses.js';
-import { CLUBS, SURFACE } from '/shared/klossgolf.js';
+import { PHASE, PALETTE, LIMITS, GAME } from '../shared/protocol.js';
+import { SIM } from '../shared/sim.js';
+import { COURSES } from '../shared/golf.js';
+import { KCOURSES } from '../shared/klosscourses.js';
+import { CLUBS, SURFACE } from '../shared/klossgolf.js';
 import { makeHeadline, scoreName } from './texts.js';
 
 function el(tag, cls, text, parent) {
@@ -339,7 +339,7 @@ export function createHud(root, opts = {}) {
       const l2 = el('label', null, 'Kod', form);
       joinCode = el('input', 'code', null, l2);
       joinCode.type = 'text';
-      joinCode.maxLength = 4;
+      joinCode.maxLength = 16;   // the server accepts 1–16 characters (KK_CODE)
       joinCode.autocomplete = 'off';
       joinCode.autocapitalize = 'characters';
       joinCode.spellcheck = false;
@@ -359,14 +359,14 @@ export function createHud(root, opts = {}) {
         const n = joinName.value.trim();
         const c = joinCode.value.replace(/\s+/g, '').toUpperCase();
         if (!n) { joinErr.textContent = 'Skriv ett smeknamn först.'; joinName.focus(); return; }
-        if (c.length !== 4) { joinErr.textContent = 'Koden har fyra bokstäver.'; joinCode.focus(); return; }
+        if (!/^[A-Z0-9]{1,16}$/.test(c)) { joinErr.textContent = 'Skriv in koden: bokstäver A–Z och siffror.'; joinCode.focus(); return; }
         joinErr.textContent = '';
         setJoinBusy(true);
         if (joinCb) joinCb(n, c);
       });
     }
     joinName.value = String(name || '').slice(0, LIMITS.NAME_MAX);
-    joinCode.value = String(code || '').replace(/\s+/g, '').toUpperCase().slice(0, 4);
+    joinCode.value = String(code || '').replace(/\s+/g, '').toUpperCase().slice(0, 16);
     joinErr.textContent = '';
     setJoinBusy(false);
     joinEl.classList.add('show');

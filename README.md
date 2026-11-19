@@ -75,7 +75,44 @@ efter slaget springer figuren fram till bollen. Alla spelar samma hål samtidigt
 
 `node tools/kloss-check.js` kontrollerar hålen och låter bottar spela dem.
 
-## Över internet
+## På GitHub Pages (ingen server)
+
+Spelet ligger på **https://niklasbeinhoff.github.io/knuffkampen/** och behöver ingen
+server och inget konto någonstans. Rummet körs i **värdens egen flik**, och de andra
+kopplar upp sig direkt mot den med WebRTC. Den fria tjänsten PeerJS används bara för att
+webbläsarna ska hitta varandra. Rummet öppnar i **Heta paketet**, och det finns ingen
+TV-vy.
+
+- **Du (värd):** öppna `https://niklasbeinhoff.github.io/knuffkampen/?k=KOD&host` och
+  skriv ditt namn. Rummet öppnas med den koden, och värdkontrollerna (botar, start, ny
+  match, kasta ut) dyker upp i din vy. `&host` försvinner direkt ur adressfältet.
+  - Låt fliken vara öppen och framme under hela spelet, för spelet körs där.
+  - Om du laddar om fliken startar rummet om tomt. Alla kommer tillbaka av sig själva,
+    men poängen nollställs.
+- **Kollegorna:** `https://niklasbeinhoff.github.io/knuffkampen/?k=KOD`, skriv namn,
+  klart. Koden fungerar som lösenord: utan den hittar man inte rummet. Du kan också
+  skicka adressen utan `?k=KOD` och ge koden separat.
+- **Koden:** 1–16 tecken, A–Z och siffror. Hitta på en egen, till exempel `PAKET2011`.
+
+Begränsningar att känna till:
+- Varje spelare kopplar upp sig direkt mot din dator. Vissa företagsnät stoppar sådana
+  uppkopplingar. PeerJS har då en fri reläserver som reserv, men den är inte garanterad.
+  Prova med ett par kollegor innan demon, gärna någon på mobilnätet.
+- Din dator skickar spelet till alla, ungefär 12 kB/s per spelare. Det är inga problem
+  på vanligt bredband.
+
+Uppdatera sidan efter ändringar i koden:
+
+```bash
+npm run pages:check                      # rummets logik, utan webbläsare
+node tools/build-pages.js /tmp/kk-pages  # bygg statiska filer
+cd /tmp/kk-pages && git init -q -b gh-pages && git add -A && git commit -qm "Pages" \
+  && git push -f git@github.com:niklasbeinhoff/knuffkampen.git gh-pages
+```
+
+GitHub Pages visar grenen `gh-pages`. `?p2p` i adressen tvingar fram Pages-läget lokalt.
+
+## Över internet med egen server (Railway eller Render)
 
 Lokalt lyssnar servern bara på den egna datorn (`127.0.0.1:3000`). För att kollegor ska
 nå spelet körs samma kod hos en molntjänst som hämtar den från ett GitHub-repo. Servern

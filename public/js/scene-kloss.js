@@ -8,9 +8,9 @@
 // rotation.y of -a. Looking along heading h, screen-right is sim (-sin h, cos h).
 
 import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
-import { KG, SURF, CLUBS, PUTTER, KST, surfaceAt, aimPoint, suggestClub } from '/shared/klossgolf.js';
-import { KCOURSES } from '/shared/klosscourses.js';
-import { PALETTE, PHASE } from '/shared/protocol.js';
+import { KG, SURF, CLUBS, PUTTER, KST, surfaceAt, aimPoint, suggestClub } from '../shared/klossgolf.js';
+import { KCOURSES } from '../shared/klosscourses.js';
+import { PALETTE, PHASE } from '../shared/protocol.js';
 
 const TAU = Math.PI * 2;
 const DEG = Math.PI / 180;

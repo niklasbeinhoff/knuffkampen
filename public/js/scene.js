@@ -13,9 +13,9 @@ import { UnrealBloomPass } from 'three/addons/postprocessing/UnrealBloomPass.js'
 import { OutputPass } from 'three/addons/postprocessing/OutputPass.js';
 import { ShaderPass } from 'three/addons/postprocessing/ShaderPass.js';
 import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
-import { SIM, arenaRadius } from '/shared/sim.js';
-import { ST, PALETTE, GAME } from '/shared/protocol.js';
-import { GOLF, BALL, COURSES, spinnerEnds, courseBounds, onGround } from '/shared/golf.js';
+import { SIM, arenaRadius } from '../shared/sim.js';
+import { ST, PALETTE, GAME } from '../shared/protocol.js';
+import { GOLF, BALL, COURSES, spinnerEnds, courseBounds, onGround } from '../shared/golf.js';
 import { createKloss } from './scene-kloss.js';
 import { createPaket } from './scene-paket.js';
 

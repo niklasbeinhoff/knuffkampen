@@ -1,17 +1,18 @@
 // Knuffkampen – client glue: socket, snapshot interpolation, input, and the
 // wiring between the scene, the HUD and the sound. See CONTRACT.md.
 
-import { SIM } from '/shared/sim.js';
-import { PHASE, ST, GAME } from '/shared/protocol.js';
-import { GOLF, BALL, COURSES } from '/shared/golf.js';
+import { SIM } from '../shared/sim.js';
+import { PHASE, ST, GAME } from '../shared/protocol.js';
+import { GOLF, BALL, COURSES } from '../shared/golf.js';
 import { createScene } from './scene.js';
 import { createHud } from './hud.js';
 import { audio } from './audio.js';
 import { koText, infoText, golfText, klossText, paketText } from './texts.js';
 import {
   KG, KST, SURF, CLUBS, SURFACE, PUTTER, maxStrokes, surfaceAt, predict, bestPower, aimPoint, suggestClub,
-} from '/shared/klossgolf.js';
-import { KCOURSES } from '/shared/klosscourses.js';
+} from '../shared/klossgolf.js';
+import { KCOURSES } from '../shared/klosscourses.js';
+import { P2P, PeerSocket, startRoom } from './p2p.js';
 
 const INTERP_MS = 100;      // how far behind the server we render
 const INPUT_MS = 33;        // input send interval
@@ -23,7 +24,8 @@ const qs = new URLSearchParams(location.search);
 // because the host shares their screen. Keep it in this tab's session instead.
 // `?host=KEY` alone is the big screen (not a player). `?k=CODE&host=KEY` joins
 // as an ordinary player who also gets the host controls ("playing host").
-const isHost = qs.has('host') && !qs.has('k');
+// On GitHub Pages (P2P) there is no big screen: the host is always a playing host.
+const isHost = !P2P && qs.has('host') && !qs.has('k');
 let hostKey = '';
 if (isHost) {
   hostKey = qs.get('host') || '';
@@ -38,6 +40,8 @@ if (isHost) {
 let ctlKey = '';
 if (!isHost) {
   ctlKey = qs.get('host') || '';
+  // Pages: '&host' needs no key, because the room runs in this very tab.
+  if (P2P && qs.has('host') && ctlKey.length <= 1) ctlKey = 'p2p';
   try {
     if (ctlKey.length > 1) sessionStorage.setItem('kk_ctl', ctlKey);
     else ctlKey = sessionStorage.getItem('kk_ctl') || '';
@@ -49,6 +53,11 @@ if (!isHost) {
   } catch { /* storage or history unavailable */ }
 }
 let amCtl = false;        // this player's socket holds the host controls
+// Pages: this tab runs the room itself (room-worker.js); the others connect to it.
+const roomHost = P2P && !!ctlKey;
+let room = null;
+let roomStarting = null;
+let roomCodeOpen = '';
 let ctlPending = false;   // host key sent after 'joined', answer not yet in
 let ctlGreeted = false;
 
@@ -85,7 +94,7 @@ const hud = createHud(document.getElementById('hud'), {
 // ---------------------------------------------------------------- state
 
 let myId = null;
-let roomCode = (qs.get('k') || '').toUpperCase().slice(0, 8);
+let roomCode = (qs.get('k') || '').toUpperCase().slice(0, 16);
 const roster = new Map();          // id -> { id, name, color, bot, score, kos, on }
 let settings = { bots: 0, rounds: 3, game: GAME.KNUFF };
 let rosterSeen = false;
@@ -173,9 +182,40 @@ let kicked = false;
 let retry = 0;
 let pendingJoin = null;  // { name, code }
 
+function ensureRoom(code) {
+  if (room) return Promise.resolve(room);
+  if (!roomStarting) {
+    roomCodeOpen = code;
+    roomStarting = startRoom(code, GAME.PAKET).then((r) => { room = r; return r; }, (err) => { roomStarting = null; throw err; });
+  }
+  return roomStarting;
+}
+
+function roomFailed(err) {
+  const taken = err && err.type === 'unavailable-id';
+  hud.setJoinError(taken
+    ? 'Ett rum med den koden är redan öppet någon annanstans. Välj en annan kod.'
+    : 'Kunde inte öppna rummet: ingen kontakt med kopplingstjänsten. Kolla nätet och försök igen.');
+}
+
+function openSocket() {
+  if (!P2P) return new WebSocket((location.protocol === 'https:' ? 'wss://' : 'ws://') + location.host + '/ws');
+  if (roomHost) return room.localSocket();
+  return new PeerSocket((pendingJoin && pendingJoin.code) || roomCode);
+}
+
 function connect() {
   if (ws && (ws.readyState === WebSocket.CONNECTING || ws.readyState === WebSocket.OPEN)) return;
-  const sock = new WebSocket((location.protocol === 'https:' ? 'wss://' : 'ws://') + location.host + '/ws');
+  if (roomHost && !room) {
+    const code = (pendingJoin && pendingJoin.code) || roomCode;
+    if (code) ensureRoom(code).then(() => connect(), roomFailed);
+    return;
+  }
+  if (roomHost && pendingJoin && pendingJoin.code !== roomCodeOpen) {
+    hud.setJoinError(`Rummet är redan öppet med koden ${roomCodeOpen}.`);
+    return;
+  }
+  const sock = openSocket();
   ws = sock;
   sock.onopen = () => {
     if (sock !== ws) return;
@@ -234,7 +274,11 @@ function onClose(ev) {
   } else if (isHost) {
     setTimeout(connect, 1500);
   } else if (pendingJoin) {
-    hud.setJoinError('Ingen kontakt med servern. Försök igen.');
+    hud.setJoinError(ev && ev.code === 4004
+      ? 'Hittar inget rum med den koden. Kolla koden, eller vänta tills värden har öppnat spelet.'
+      : ev && ev.code === 4005
+        ? 'Når inte kopplingstjänsten. Kolla nätet och försök igen.'
+        : 'Ingen kontakt med servern. Försök igen.');
   }
 }
 
@@ -268,7 +312,9 @@ function onMessage(m) {
       if (!isHost) {
         ctlPending = false;
         if (myId === null) break;
-        if (!ctlGreeted) hud.ticker('Du är värd: välj spel och starta när alla är med', 'info');
+        if (!ctlGreeted) {
+          hud.ticker(roomHost ? 'Du är värd och spelet körs i den här fliken: stäng den inte' : 'Du är värd: välj spel och starta när alla är med', 'info');
+        }
         ctlGreeted = true;
         setCtl(true);
         break;
@@ -1392,6 +1438,14 @@ function showJoin(error) {
     },
   });
   if (error) hud.setJoinError(error);
+}
+
+if (roomHost) {
+  // Open the room at once, so the others can get in while the host types a name.
+  if (roomCode) ensureRoom(roomCode).catch(roomFailed);
+  window.addEventListener('beforeunload', (e) => {
+    if (room && room.remoteCount() > 0) { e.preventDefault(); e.returnValue = ''; }
+  });
 }
 
 if (isHost) {
