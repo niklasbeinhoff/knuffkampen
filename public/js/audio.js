@@ -56,6 +56,9 @@ function makePan(pan) {
 // Shared clean envelope: short linear attack, exponential decay, hard zero at the end.
 function envelope(g, t0, dur, peak, attack) {
   const a = Math.min(attack, dur * 0.5);
+  // Silent until the first event: a source can start a sample before the event at t0
+  // takes effect, and one sample at the default gain of 1 is an audible click.
+  g.gain.value = 0;
   g.gain.setValueAtTime(0, t0);
   g.gain.linearRampToValueAtTime(peak, t0 + a);
   g.gain.exponentialRampToValueAtTime(0.0001, t0 + dur);
@@ -274,60 +277,109 @@ const KLOSSM = {
   },
 };
 
-// Heta paketet: a mischievous, bouncy loop with a ticking clock in the percussion.
-// Eight bars in A minor with a sneaky E major turn at the end: Am Am F F C G Dm E.
-// Woodblock tick-tock on every eighth, plucked staccato tune, off-beat stabs.
+// Heta paketet: a cheeky party romp in G major at polka speed. Oom-pah bass with
+// off-beat chord "pahs", kick and clap, a jingling tambourine, a toy-trumpet tune,
+// a cowbell now and then and a slide whistle into every new lap of the loop.
+// Eight bars: G D Em C | G D C D.
 const PAKETM = {
-  bpm: 136,
+  bpm: 152,
   // [chord root midi, minor?, bass root midi]
-  chords: [[57, 1, 45], [57, 1, 45], [53, 0, 41], [53, 0, 41], [48, 0, 48], [55, 0, 43], [50, 1, 50], [52, 0, 40]],
-  // semitones above A4, 99 = rest
+  chords: [[55, 0, 43], [50, 0, 50], [52, 1, 40], [48, 0, 48], [55, 0, 43], [50, 0, 50], [48, 0, 48], [50, 0, 50]],
+  // semitones above G4, 99 = rest: a call (bars 1-2), an answer (3-4), the call again
+  // reaching higher (5-6), and a run up into the slide whistle (7-8)
   tune: [
-    0, 99, 3, 99, 5, 99, 3, 0,    7, 99, 5, 3, 99, 0, 99, 99,
-    0, 99, 3, 99, 8, 99, 7, 3,    5, 99, 3, 0, 99, -4, 99, 99,
-    3, 99, 7, 99, 10, 99, 7, 3,   2, 99, 5, 99, 7, 5, 2, 99,
-    5, 99, 8, 99, 5, 3, 99, 0,    7, 99, 11, 99, 14, 12, 11, 99,
+    7, 99, 7, 4, 7, 99, 12, 99,    11, 99, 9, 7, 9, 99, 2, 99,
+    4, 99, 7, 4, 11, 99, 9, 7,     9, 99, 7, 4, 5, 99, 99, 99,
+    7, 99, 7, 4, 7, 99, 12, 14,    16, 99, 14, 12, 14, 99, 9, 99,
+    12, 99, 9, 7, 5, 99, 4, 99,    2, 4, 7, 11, 99, 99, 99, 99,
   ],
   step(t, dur, i, dest) {
     const s = i % 8;
-    const [root, minor, bassRoot] = this.chords[Math.floor(i / 8) % 8];
-    // the clock: a woodblock tick on every eighth, tock a little lower on the off-beats
-    const tock = s % 2 === 1;
-    tone({ type: 'sine', pts: [[0, tock ? 1500 : 2000], [0.02, tock ? 1250 : 1650]], t, dur: 0.035, gain: tock ? 0.022 : 0.034, attack: 0.001, dest, free: true });
-    noise({ kind: 'bandpass', f: [3600, 3600], q: 2, t, dur: 0.012, gain: 0.02, attack: 0.001, dest, free: true });
-    // plucked bass that hops: root, rest, octave, rest ...
-    const bass = [0, 99, 12, 99, 0, 7, 12, 99][s];
-    if (bass !== 99) {
-      tone({ type: 'triangle', pts: [[0, mtof(bassRoot + bass)]], t, dur: dur * 0.6, gain: 0.07, attack: 0.004, dest, free: true });
-    }
-    // kick on the beat, a snappy clap on two and four
-    if (s === 0 || s === 4) {
-      tone({ type: 'sine', pts: [[0, 150], [0.07, 50]], t, dur: 0.1, gain: 0.085, attack: 0.003, dest, free: true });
-    }
-    if (s === 2 || s === 6) {
-      noise({ kind: 'bandpass', f: [1900, 1900], q: 0.9, t, dur: 0.06, gain: 0.03, dest, free: true });
-    }
-    // sneaky off-beat stabs
-    if (tock) {
-      for (const n of [0, minor ? 3 : 4, 7]) {
-        tone({ type: 'triangle', pts: [[0, mtof(root + n)]], t, dur: dur * 0.3, gain: 0.014, attack: 0.003, dest, free: true });
+    const bar = Math.floor(i / 8) % 8;
+    const [root, minor, bassRoot] = this.chords[bar];
+    const third = minor ? 3 : 4;
+    if (s % 2 === 0) {
+      // oom: the bass walks root, fifth, octave, fifth on the beats
+      const b = [0, 7, 12, 7][s / 2];
+      tone({ type: 'triangle', pts: [[0, mtof(bassRoot + b)]], t, dur: dur * 0.75, gain: 0.075, attack: 0.004, dest, free: true });
+    } else {
+      // pah: a short bright chord on every off-beat
+      for (const n of [0, third, 7]) {
+        tone({ type: 'triangle', pts: [[0, mtof(root + n)]], t, dur: dur * 0.4, gain: 0.014, attack: 0.003, dest, free: true });
+        tone({ type: 'square', pts: [[0, mtof(root + n)]], t, dur: dur * 0.25, gain: 0.0035, attack: 0.003, dest, free: true });
       }
     }
-    // the tune: staccato plucks with a little square sparkle on top
+    // kick on one and three, a clap with a little snap on two and four
+    if (s === 0 || s === 4) {
+      tone({ type: 'sine', pts: [[0, 160], [0.07, 50]], t, dur: 0.1, gain: 0.09, attack: 0.003, dest, free: true });
+    }
+    if (s === 2 || s === 6) {
+      noise({ kind: 'bandpass', f: [1800, 1800], q: 0.9, t, dur: 0.07, gain: 0.034, dest, free: true });
+      noise({ kind: 'highpass', f: [4500, 4500], q: 0.6, t: t + 0.008, dur: 0.03, gain: 0.014, dest, free: true });
+    }
+    // tambourine: every eighth, leaning on the off-beats, a double jingle at the end of the bar
+    noise({ kind: 'highpass', f: [8500, 8500], q: 0.5, t, dur: 0.045, gain: s % 2 ? 0.02 : 0.01, attack: 0.002, dest, free: true });
+    if (s === 7) noise({ kind: 'highpass', f: [8500, 8500], q: 0.5, t: t + dur * 0.5, dur: 0.04, gain: 0.013, attack: 0.002, dest, free: true });
+    // cowbell on the first beat of bars one and five
+    if (s === 0 && bar % 4 === 0) {
+      tone({ type: 'square', pts: [[0, 560]], t, dur: 0.09, gain: 0.006, attack: 0.001, dest, free: true });
+      tone({ type: 'square', pts: [[0, 845]], t, dur: 0.07, gain: 0.005, attack: 0.001, dest, free: true });
+    }
+    // the tune: a toy trumpet, squeezing up into each note, doubled an octave down the second time
     const n = this.tune[i % 64];
     if (n !== 99) {
-      const f = mtof(69 + n);
-      tone({ type: 'triangle', pts: [[0, f]], t, dur: dur * 0.55, gain: 0.052, attack: 0.003, dest, free: true });
-      tone({ type: 'square', pts: [[0, f * 2]], t, dur: dur * 0.2, gain: 0.005, attack: 0.002, dest, free: true });
+      const f = mtof(67 + n);
+      tone({ type: 'triangle', pts: [[0, f]], t, dur: dur * 0.8, gain: 0.045, attack: 0.004, dest, free: true });
+      tone({ type: 'square', pts: [[0, f * 0.97], [0.025, f]], t, dur: dur * 0.6, gain: 0.011, attack: 0.006, dest, free: true });
+      if (bar >= 4) tone({ type: 'triangle', pts: [[0, f / 2]], t, dur: dur * 0.7, gain: 0.02, attack: 0.004, dest, free: true });
     }
-    // a tiny alarm-clock ding at the start of every second bar pair
-    if (i % 32 === 0) {
-      tone({ type: 'sine', pts: [[0, 2093]], t, dur: 0.5, gain: 0.014, attack: 0.002, dest, free: true });
+    // slide whistle up into the next lap, and a splash when it lands
+    if (i % 64 === 60) {
+      tone({ type: 'sine', pts: [[0, mtof(67)], [dur * 3.6, mtof(91)]], t, dur: dur * 3.8, gain: 0.03, attack: 0.03, dest, free: true });
+    }
+    if (i % 64 === 0 && i > 0) {
+      noise({ kind: 'highpass', f: [5000, 5000], q: 0.5, t, dur: 0.7, gain: 0.018, attack: 0.002, dest, free: true });
     }
   },
 };
 
-const MODES = { lobby: LOBBY, game: GAME, golf: GOLFM, kloss: KLOSSM, paket: PAKETM };
+// Heta paketet lobby: the same chords at an easy stroll while people drop in.
+// Marimba arpeggios, a round bass, finger snaps and a shaker; every other lap the
+// first bars of the match tune peek in on a soft whistle.
+const PAKET_LOBBY = {
+  bpm: 112,
+  chords: [[55, 0, 43], [50, 0, 50], [52, 1, 40], [48, 0, 48]],
+  step(t, dur, i, dest) {
+    const s = i % 8;
+    const [root, minor, bassRoot] = this.chords[Math.floor(i / 8) % 4];
+    const tones = [0, minor ? 3 : 4, 7, 12];
+    // marimba: a round sine with a short bright overtone on the strike
+    const f = mtof(root + 12 + tones[[0, 2, 1, 3, 2, 1, 3, 2][s]]);
+    tone({ type: 'sine', pts: [[0, f]], t, dur: dur * 1.3, gain: 0.042, attack: 0.003, dest, free: true });
+    tone({ type: 'sine', pts: [[0, f * 4]], t, dur: 0.05, gain: 0.007, attack: 0.001, dest, free: true });
+    // bass on one and three (root, then fifth)
+    if (s === 0 || s === 4) {
+      tone({ type: 'triangle', pts: [[0, mtof(bassRoot + (s ? 7 : 0))]], t, dur: dur * 1.8, gain: 0.07, attack: 0.006, dest, free: true });
+    }
+    // finger snaps on two and four, shaker on the off-beats
+    if (s === 2 || s === 6) {
+      noise({ kind: 'bandpass', f: [2600, 2600], q: 1.4, t, dur: 0.035, gain: 0.032, attack: 0.001, dest, free: true });
+    }
+    if (s % 2 === 1) {
+      noise({ kind: 'highpass', f: [8000, 8000], q: 0.5, t, dur: 0.05, gain: 0.011, attack: 0.012, dest, free: true });
+    }
+    // the match tune's opening, every other lap
+    if (Math.floor(i / 32) % 2 === 1 && i % 32 < 16) {
+      const n = PAKETM.tune[i % 32];
+      if (n !== 99) {
+        const w = mtof(67 + n);
+        tone({ type: 'sine', pts: [[0, w * 0.98], [0.04, w]], t, dur: dur * 0.9, gain: 0.034, attack: 0.012, dest, free: true });
+      }
+    }
+  },
+};
+
+const MODES = { lobby: LOBBY, game: GAME, golf: GOLFM, kloss: KLOSSM, paket: PAKETM, paketLobby: PAKET_LOBBY };
 
 function startTrack(mode) {
   const def = MODES[mode];

@@ -116,7 +116,7 @@ let lastWarnK = -1;
 let warnAnnounced = false;
 let pendingRound = null;
 let pendingMatch = null;
-let musicMode = 'lobby';
+let musicMode = P2P ? 'paketLobby' : 'lobby';   // the Pages site is Heta paketet
 let audioUnlocked = false;
 
 const view = {
@@ -666,6 +666,7 @@ function maybeShowMatch() {
 }
 
 const roundMusic = () => (curGame === GAME.PAKET ? 'paket' : 'game');
+const lobbyMusic = () => (curGame === GAME.PAKET ? 'paketLobby' : 'lobby');
 
 function onPhase(ph, s, prev) {
   lastCount = -1;
@@ -676,7 +677,7 @@ function onPhase(ph, s, prev) {
       hud.clearOverlays();
       clearTimeout(outTimer);
       amOut = false;
-      setMusic('lobby');
+      setMusic(lobbyMusic());
       if (prev !== -1) hud.ticker(curGame === GAME.PAKET ? paketText('lobby', {}) : infoText('lobby'), 'info');
       break;
     case PHASE.COUNTDOWN:
@@ -702,7 +703,7 @@ function onPhase(ph, s, prev) {
       hud.clearOverlays();
       clearTimeout(outTimer);
       amOut = false;
-      setMusic('lobby');
+      setMusic(lobbyMusic());
       maybeShowMatch();
       break;
     default: break;
